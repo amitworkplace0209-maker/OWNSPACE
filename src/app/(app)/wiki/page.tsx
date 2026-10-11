@@ -38,10 +38,10 @@ export default async function WikiPage() {
               <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {projectPages.map((page) => (
                   <li key={page.id}>
-                    <Link
-                      href={projectId === "unassigned" ? "/wiki" : `/projects/${projectId}/wiki`}
-                      className="flex h-full flex-col gap-2 rounded-xl border bg-card p-4 transition hover:border-primary/50 hover:bg-accent/40"
-                    >
+                       <Link
+                         href={projectId === "unassigned" ? `/wiki?page=${page.slug}` : `/projects/${projectId}/wiki?page=${page.slug}`}
+                         className="flex h-full flex-col gap-2 rounded-xl border bg-card p-4 transition hover:border-primary/50 hover:bg-accent/40"
+                       >
                       <p className="text-sm font-medium">{page.title}</p>
                       {page.content ? (
                         <p className="line-clamp-2 text-xs text-muted-foreground">{page.content.replace(/[#>*`_\-\[\]()]/g, "").slice(0, 140)}</p>

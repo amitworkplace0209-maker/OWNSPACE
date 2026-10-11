@@ -193,6 +193,12 @@ function EditTagForm({ tag, onDone, onCancel }: { tag: Tag; onDone: () => void; 
 }
 
 function ColorPicker({ value, onChange }: { value: string; onChange: (color: string) => void }) {
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const next = e.target.value;
+    if (/^#[0-9a-fA-F]{0,6}$/.test(next) || next === "") {
+      onChange(next);
+    }
+  }
   return (
     <FormField label="Color">
       <div className="flex items-center gap-2">
@@ -214,9 +220,9 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (color: str
         <Input
           type="text"
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={handleChange}
           className="h-8 w-28 font-mono text-xs"
-          maxLength={30}
+          maxLength={7}
         />
       </div>
     </FormField>

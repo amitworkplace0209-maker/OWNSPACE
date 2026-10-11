@@ -319,6 +319,14 @@ export async function removeTaskDependencyAction(
   const user = await getUserOrRedirect();
   const supabase = await createClient();
 
+  // Resolve the owning project so the correct workspace route is revalidated.
+  const { data: owningProject } = await supabase
+    .from("tasks")
+    .select("project_id")
+    .eq("user_id", user.id)
+    .eq("id", taskId)
+    .maybeSingle();
+
   const { error } = await supabase
     .from("task_dependencies")
     .delete()
@@ -328,7 +336,10 @@ export async function removeTaskDependencyAction(
   if (error) return { error: friendlyError(error, "Could not remove dependency.") };
 
   revalidatePath("/tasks");
-  revalidatePath(`/projects/${dependsOnTaskId}`);
+  if (owningProject?.project_id) {
+    revalidatePath(`/projects/${owningProject.project_id}/tasks`);
+    revalidatePath(`/projects/${owningProject.project_id}`);
+  }
   return {};
 }
 

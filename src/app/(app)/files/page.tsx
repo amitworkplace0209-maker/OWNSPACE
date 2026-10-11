@@ -9,7 +9,7 @@ export const metadata = {
 
 export default async function FilesPage() {
   await requireUser();
-  const files = await getFiles();
+  const files = await getFiles({ limit: 200 });
 
   return (
     <div className="flex flex-col gap-6">

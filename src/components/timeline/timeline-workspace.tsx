@@ -33,13 +33,46 @@ const kindLabel: Record<Kind, string> = {
   reminder: "Reminders",
 };
 
+const statusLabel: Record<string, string> = {
+  pending: "Pending",
+  active: "Active",
+  completed: "Completed",
+  triggered: "Triggered",
+  dismissed: "Dismissed",
+  snoozed: "Snoozed",
+  archived: "Archived",
+};
+
+export function statusLabelOf(status: string): string {
+  return statusLabel[status] ?? status;
+}
+
+function localDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function localMonthStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
 function sortItems(items: TimelineItem[]) {
-  return items.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return [...items].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
 export function TimelineWorkspace({ items }: { items: TimelineItem[] }) {
-  const [viewMonth, setViewMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [viewMonth, setViewMonth] = useState(() => localMonthStr(new Date()));
   const [filter, setFilter] = useState<Kind>("all");
+
+  const bounds = useMemo(() => {
+    const dates = items.map((i) => i.date);
+    if (dates.length === 0) return { min: null, max: null };
+    return { min: dates.reduce((a, b) => (a < b ? a : b)), max: dates.reduce((a, b) => (a > b ? a : b)) };
+  }, [items]);
 
   const grouped = useMemo(() => {
     const filtered = filter === "all" ? items : items.filter((i) => i.kind === filter);
@@ -60,19 +93,23 @@ export function TimelineWorkspace({ items }: { items: TimelineItem[] }) {
 
   function prevMonth() {
     const [y, m] = viewMonth.split("-").map(Number);
-    setViewMonth(m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`);
+    const next = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+    if (bounds.min && next < bounds.min.slice(0, 7)) return;
+    setViewMonth(next);
   }
   function nextMonth() {
     const [y, m] = viewMonth.split("-").map(Number);
-    setViewMonth(m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`);
+    const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+    if (bounds.max && next > bounds.max.slice(0, 7)) return;
+    setViewMonth(next);
   }
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <button onClick={prevMonth} aria-label="Previous month" className="rounded-lg border p-2 hover:bg-accent"><ChevronLeft className="size-4" /></button>
-          <button onClick={nextMonth} aria-label="Next month" className="rounded-lg border p-2 hover:bg-accent"><ChevronRight className="size-4" /></button>
+          <button onClick={prevMonth} aria-label="Previous month" disabled={bounds.min ? viewMonth <= bounds.min.slice(0, 7) : false} className="rounded-lg border p-2 hover:bg-accent disabled:opacity-40"><ChevronLeft className="size-4" /></button>
+          <button onClick={nextMonth} aria-label="Next month" disabled={bounds.max ? viewMonth >= bounds.max.slice(0, 7) : false} className="rounded-lg border p-2 hover:bg-accent disabled:opacity-40"><ChevronRight className="size-4" /></button>
           <h2 className="ml-1 text-lg font-semibold">
             {new Date(`${viewMonth}-01T00:00:00`).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
           </h2>
@@ -94,34 +131,34 @@ export function TimelineWorkspace({ items }: { items: TimelineItem[] }) {
         <EmptyState icon={CalendarDays} title="Nothing scheduled" description="Add tasks with due dates, milestones, events or reminders to see the full timeline." />
       ) : (
         <div className="flex flex-col gap-5">
-          {grouped.map(([date, dayItems]) => {
-            const today = date === new Date().toISOString().slice(0, 10);
-            return (
-              <div key={date}>
-                <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-                  {new Date(`${date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
-                  {today ? <span className="rounded-md bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">TODAY</span> : null}
-                </h3>
-                <ul className="flex flex-col gap-1.5">
-                  {dayItems.map((item) => {
-                    const Icon = kindIcon[item.kind];
-                    return (
-                      <li key={`${item.kind}-${item.id}`}>
-                        <Link
-                          href={item.href}
-                          className="flex items-center gap-3 rounded-lg border border-border/60 bg-card px-3 py-2 transition hover:border-primary/50 hover:bg-accent/40"
-                        >
-                          <Icon className="size-4 shrink-0 text-primary" />
-                          <span className="min-w-0 flex-1 truncate text-sm">{item.title}</span>
-                          <span className="shrink-0 text-xs text-muted-foreground">{item.meta}</span>
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            );
-          })}
+           {grouped.map(([date, dayItems]) => {
+             const today = date === localDateStr(new Date());
+             return (
+               <div key={date}>
+                 <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+                   {new Date(`${date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+                   {today ? <span className="rounded-md bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">TODAY</span> : null}
+                 </h3>
+                 <ul className="flex flex-col gap-1.5">
+                   {dayItems.map((item) => {
+                     const Icon = kindIcon[item.kind];
+                     return (
+                       <li key={`${item.kind}-${item.id}`}>
+                         <Link
+                           href={item.href}
+                           className="flex items-center gap-3 rounded-lg border border-border/60 bg-card px-3 py-2 transition hover:border-primary/50 hover:bg-accent/40"
+                         >
+                           <Icon className="size-4 shrink-0 text-primary" />
+                           <span className="min-w-0 flex-1 truncate text-sm">{item.title}</span>
+                           <span className="shrink-0 text-xs text-muted-foreground">{item.meta}</span>
+                         </Link>
+                       </li>
+                     );
+                   })}
+                 </ul>
+               </div>
+             );
+           })}
         </div>
       )}
 

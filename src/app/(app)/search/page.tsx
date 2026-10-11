@@ -75,7 +75,8 @@ export default async function SearchPage({
     results.notes.length +
     results.wiki.length +
     results.files.length +
-    results.milestones.length;
+    results.milestones.length +
+    results.dailyNotes.length;
 
   return (
     <div className="flex flex-col gap-6">

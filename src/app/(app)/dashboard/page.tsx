@@ -1,321 +1,295 @@
-import Link from "next/link";
-import { getProjectSummary } from "@/lib/dal/projects";
-import {
-  getTaskSummary,
-  getTasksDueToday,
-  getTasksOverdue,
-  type DueTask,
-} from "@/lib/dal/tasks";
-import {
-  getUpcomingEvents,
-  getUpcomingReminders,
-  getRecentActivity,
-} from "@/lib/dal/calendar";
-import { getRecentNotes } from "@/lib/dal/notes";
+import { Suspense, type ReactNode } from "react";
 import { getProfile, requireUser } from "@/lib/dal";
-import { formatDateTime, formatRelativeTime } from "@/lib/format";
-import { PageHeader } from "@/components/shared/page-header";
-import { EmptyState } from "@/components/shared/empty-state";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { getProjectSummary } from "@/lib/dal/projects";
+import { getTaskSummary, getTodayWork, getTasks } from "@/lib/dal/tasks";
+import { getAnalyticsSnapshot } from "@/lib/dal/analytics";
 import { ReminderSweep } from "@/components/dashboard/reminder-sweep";
-import { ProjectsProgress } from "@/components/dashboard/projects-progress";
-import { ArrowUpRight, CalendarDays, CheckCircle2, Clock, FolderPlus } from "lucide-react";
+import { InstallPrompt } from "@/components/layout/install-prompt";
+import {
+  DashboardHeader,
+  type HeaderChip,
+} from "@/components/dashboard/dashboard-header";
+import { QuickActions } from "@/components/dashboard/quick-actions";
+import { KpiCards } from "@/components/dashboard/kpi-cards";
+import { TodaysWork } from "@/components/dashboard/todays-work";
+import { UpcomingSection } from "@/components/dashboard/upcoming-panel";
+import { ActiveProjectsSection } from "@/components/dashboard/active-projects";
+import { FocusCard, type FocusTask } from "@/components/dashboard/focus-card";
+import { ProductivityCard } from "@/components/dashboard/productivity-card";
+import { CalendarWidget } from "@/components/dashboard/calendar-widget";
+import { ActivityFeed } from "@/components/dashboard/activity-feed";
+import { RecentNotes } from "@/components/dashboard/recent-notes";
+import { StorageOverview } from "@/components/dashboard/storage-overview";
+import { SystemStatus } from "@/components/dashboard/system-status";
+import { SectionErrorBoundary } from "@/components/dashboard/dashboard-error";
+import {
+  CalendarSkeleton,
+  ChartSkeleton,
+  HeaderSkeleton,
+  KpiSkeleton,
+  ListSkeleton,
+  PanelSkeleton,
+  ProjectCardsSkeleton,
+  StorageSkeleton,
+  TimelineSkeleton,
+} from "@/components/dashboard/dashboard-skeletons";
+import { dueTodayTone, greetingFor, overdueTone } from "@/lib/dashboard-logic";
 
-function greeting(): string {
-  const h = new Date().getHours();
-  if (h < 5) return "Good night";
-  if (h < 12) return "Good morning";
-  if (h < 18) return "Good afternoon";
-  return "Good evening";
-}
+export const metadata = {
+  title: "Dashboard",
+};
 
-function DueTaskRow({ task, overdue }: { task: DueTask; overdue?: boolean }) {
+/**
+ * Grid placement.
+ *
+ * The dashboard is one flat 3-column grid rather than two nested columns so a
+ * section's mobile rank and its desktop slot can be chosen independently.
+ * `order-*`/`lg:order-*` are written out as literal class names because
+ * Tailwind only generates utilities it can see in source.
+ *
+ * On desktop, each wide (col-span-2) section is followed by a narrow one, so
+ * auto-placement fills every row: the wide card takes the left two columns and
+ * the narrow card the right rail. On mobile the same classes collapse to a
+ * single column ranked 1→10.
+ */
+const SLOT = {
+  todayWork: "order-1 lg:order-1 lg:col-span-2",
+  focus: "order-3 lg:order-2",
+  upcoming: "order-2 lg:order-3 lg:col-span-2",
+  projects: "order-4 lg:order-4",
+  activity: "order-6 lg:order-5 lg:col-span-2",
+  productivity: "order-5 lg:order-6",
+  notes: "order-8 lg:order-7 lg:col-span-2",
+  calendar: "order-7 lg:order-8",
+  storage: "order-9 lg:order-9 lg:col-span-2",
+  system: "order-10 lg:order-10",
+} as const;
+
+// ---------------------------------------------------------------------------
+// Section components
+//
+// Each one owns its own data fetch, so each <Suspense> above it streams only
+// that card's skeleton while the rest of the dashboard is already interactive.
+// ---------------------------------------------------------------------------
+
+async function HeaderSection() {
+  const user = await requireUser();
+  const [profile, taskSummary, projectSummary, snapshot] = await Promise.all([
+    getProfile(user.id),
+    getTaskSummary(),
+    getProjectSummary(),
+    getAnalyticsSnapshot(),
+  ]);
+
+  const chips: HeaderChip[] = [];
+  if (taskSummary.overdue > 0) {
+    chips.push({
+      id: "overdue",
+      label: `${taskSummary.overdue} overdue`,
+      tone: overdueTone(taskSummary.overdue),
+      href: "/tasks?due=overdue",
+    });
+  }
+  chips.push({
+    id: "today",
+    label: `${taskSummary.today} due today`,
+    tone: dueTodayTone(taskSummary.today),
+    href: "/tasks?due=today",
+  });
+  chips.push({
+    id: "projects",
+    label: `${projectSummary.active} active projects`,
+    tone: "info",
+    href: "/projects",
+  });
+  if (snapshot.pomodoro.running) {
+    chips.push({
+      id: "focus",
+      label: "Focus running",
+      tone: "success",
+      href: "/time",
+    });
+  }
+
+  const now = new Date();
   return (
-    <li>
-      <Link
-        href={`/projects`}
-        className="group flex items-center justify-between gap-3 rounded-lg border-b border-border/50 py-2.5 last:border-0 hover:bg-accent/40"
-      >
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <span className="truncate text-sm font-medium group-hover:underline">
-            {task.title}
-          </span>
-          <span className="truncate text-xs text-muted-foreground">{task.project_name}</span>
-        </div>
-        <span
-          className={`shrink-0 text-xs font-medium ${
-            overdue ? "text-destructive" : "text-muted-foreground"
-          }`}
-        >
-          {task.due_date ? formatRelativeTime(task.due_date) : "—"}
-        </span>
-      </Link>
-    </li>
+    <DashboardHeader
+      name={profile?.display_name?.split(" ")[0] ?? ""}
+      chips={chips}
+      serverGreeting={greetingFor(now)}
+      serverDate={now.toLocaleDateString(undefined, {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+      })}
+      serverTime={now.toLocaleTimeString(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}
+    />
   );
 }
 
-export default async function DashboardPage() {
-  const user = await requireUser();
-  const profile = await getProfile(user.id);
-  const [projectSummary, taskSummary, tasksToday, tasksOverdue, events, reminders, activity, recentNotes] =
-    await Promise.all([
-      getProjectSummary(),
-      getTaskSummary(),
-      getTasksDueToday(),
-      getTasksOverdue(),
-      getUpcomingEvents(5),
-      getUpcomingReminders(5),
-      getRecentActivity({ limit: 8 }),
-      getRecentNotes(5),
-    ]);
+async function TodaysWorkSection() {
+  const work = await getTodayWork();
+  return (
+    <TodaysWork
+      dueToday={work.dueToday}
+      overdue={work.overdue}
+      inProgress={work.inProgress}
+      highPriority={work.highPriority}
+      progress={work.progress}
+    />
+  );
+}
 
-  const today = new Date();
-  const todayLabel = today.toLocaleDateString(undefined, {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  });
+async function FocusSection() {
+  const [openTasks, snapshot] = await Promise.all([
+    getTasks({ completed: false, limit: 25 }),
+    getAnalyticsSnapshot(),
+  ]);
 
-  const name = profile?.display_name?.split(" ")[0];
-  const statCards = [
-    { label: "Active projects", value: String(projectSummary.active), href: "/projects" },
-    { label: "Tasks due today", value: String(taskSummary.today), href: "/tasks?due=today" },
-    { label: "Overdue tasks", value: String(taskSummary.overdue), href: "/tasks?due=overdue" },
-    { label: "Upcoming events", value: String(events.length), href: "/calendar" },
-  ];
+  const tasks: FocusTask[] = openTasks.map((task) => ({
+    id: task.id,
+    title: task.title,
+  }));
 
   return (
-    <div className="flex flex-col gap-6">
-      <ReminderSweep />
-      <PageHeader
-        title={`${greeting()}, ${name || "there"}`}
-        description={todayLabel}
-        actions={
-          <Button render={<Link href="/projects?new=1" />}>
-            <FolderPlus /> New project
-          </Button>
-        }
-      />
+    <FocusCard
+      tasks={tasks}
+      todaySessions={snapshot.pomodoro.todaySessions}
+      focusMinutes={snapshot.pomodoro.totalFocusMinutes}
+      sessionRunning={snapshot.pomodoro.running}
+      timerRunning={snapshot.time.onRunningTask}
+    />
+  );
+}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {statCards.map((card) => (
-          <Link
-            key={card.label}
-            href={card.href}
-            className="group rounded-xl border bg-card p-4 text-card-foreground shadow-sm transition hover:border-primary/40"
-          >
-            <p className="text-sm text-muted-foreground">{card.label}</p>
-            <p className="mt-1.5 text-2xl font-semibold tabular-nums">{card.value}</p>
-            <ArrowUpRight className="mt-1 size-4 text-muted-foreground/60 transition group-hover:text-primary" />
-          </Link>
-        ))}
-      </div>
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
+
+/**
+ * One dashboard section: grid placement, its own streaming boundary, and its
+ * own error boundary.
+ *
+ * Error boundaries do not retry on their own — resetting one would just replay
+ * the same failed RSC payload — so the fallback offers a Retry that calls
+ * `router.refresh()` and re-runs the section's server-side query.
+ */
+function Section({
+  title,
+  slot = "",
+  fallback,
+  children,
+}: {
+  title: string;
+  slot?: string;
+  fallback: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className={slot}>
+      <SectionErrorBoundary title={title}>
+        <Suspense fallback={fallback}>{children}</Suspense>
+      </SectionErrorBoundary>
+    </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <div className="page-grid">
+      <ReminderSweep />
+
+      <InstallPrompt />
+
+      <Section title="Greeting" fallback={<HeaderSkeleton />}>
+        <HeaderSection />
+      </Section>
+
+      <Section title="Key numbers" fallback={<KpiSkeleton />}>
+        <KpiCards />
+      </Section>
+
+      <QuickActions />
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <div className="flex flex-col gap-4 lg:col-span-2">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Card>
-              <CardHeader className="flex-row items-center justify-between">
-                <CardTitle className="text-sm">Due today</CardTitle>
-                {taskSummary.today > 0 ? (
-                  <Link href="/tasks?due=today">
-                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
-                      View all <ArrowUpRight className="ml-1 size-3.5" />
-                    </Button>
-                  </Link>
-                ) : null}
-              </CardHeader>
-              <CardContent>
-                {tasksToday.length === 0 ? (
-                  <EmptyState
-                    icon={CheckCircle2}
-                    title="Nothing due today"
-                    description="Add a task and give it a due date to see it here."
-                  />
-                ) : (
-                  <ul>
-                    {tasksToday.map((task) => (
-                      <DueTaskRow key={task.id} task={task} />
-                    ))}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
+        <Section
+          title="Today's work"
+          slot={SLOT.todayWork}
+          fallback={<ListSkeleton rows={4} />}
+        >
+          <TodaysWorkSection />
+        </Section>
 
-            <Card>
-              <CardHeader className="flex-row items-center justify-between">
-                <CardTitle className="text-sm text-destructive">Overdue</CardTitle>
-                {taskSummary.overdue > 0 ? (
-                  <Link href="/tasks?due=overdue">
-                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
-                      View all <ArrowUpRight className="ml-1 size-3.5" />
-                    </Button>
-                  </Link>
-                ) : null}
-              </CardHeader>
-              <CardContent>
-                {tasksOverdue.length === 0 ? (
-                  <EmptyState
-                    icon={CheckCircle2}
-                    title="You're all caught up"
-                    description="No tasks are past their due date."
-                  />
-                ) : (
-                  <ul>
-                    {tasksOverdue.map((task) => (
-                      <DueTaskRow key={task.id} task={task} overdue />
-                    ))}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+        <Section title="Focus" slot={SLOT.focus} fallback={<PanelSkeleton />}>
+          <FocusSection />
+        </Section>
 
-          <Card>
-            <CardHeader className="flex-row items-center justify-between">
-              <CardTitle className="text-sm">Upcoming events & reminders</CardTitle>
-              <Link href="/calendar">
-                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
-                  Calendar <ArrowUpRight className="ml-1 size-3.5" />
-                </Button>
-              </Link>
-            </CardHeader>
-            <CardContent>
-              {events.length === 0 && reminders.length === 0 ? (
-                <EmptyState
-                  icon={CalendarDays}
-                  title="Nothing scheduled"
-                  description="Add a calendar event or a reminder to see it here."
-                />
-              ) : (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <ul className="flex flex-col">
-                    {events.slice(0, 4).map((event) => (
-                      <li
-                        key={event.id}
-                        className="flex items-center justify-between gap-2 border-b border-border/50 py-2 last:border-0"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">{event.title}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatDateTime(event.starts_at)}
-                          </p>
-                        </div>
-                        <span className="size-2 shrink-0 rounded-full bg-primary" />
-                      </li>
-                    ))}
-                  </ul>
-                  <ul className="flex flex-col">
-                    {reminders.slice(0, 4).map((reminder) => (
-                      <li
-                        key={reminder.id}
-                        className="flex items-center justify-between gap-2 border-b border-border/50 py-2 last:border-0"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">{reminder.title}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatDateTime(reminder.remind_at)}
-                          </p>
-                        </div>
-                        <Clock className="size-3.5 shrink-0 text-muted-foreground" />
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+        <Section
+          title="Upcoming"
+          slot={SLOT.upcoming}
+          fallback={<ListSkeleton rows={5} />}
+        >
+          <UpcomingSection />
+        </Section>
 
-          <Card>
-            <CardHeader className="flex-row items-center justify-between">
-              <CardTitle className="text-sm">Recent activity</CardTitle>
-              <Link href="/activity">
-                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
-                  Activity <ArrowUpRight className="ml-1 size-3.5" />
-                </Button>
-              </Link>
-            </CardHeader>
-            <CardContent>
-              {activity.length === 0 ? (
-                <EmptyState
-                  title="No activity yet"
-                  description="Actions you take in Ownspece will appear here."
-                />
-              ) : (
-                <ul>
-                  {activity.map((item) => (
-                    <li
-                      key={item.id}
-                      className="flex items-center justify-between gap-3 border-b border-border/50 py-2 text-sm last:border-0"
-                    >
-                      <span className="min-w-0 truncate text-muted-foreground">{item.summary}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground/70">
-                        {formatRelativeTime(item.created_at)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+        <Section
+          title="Active projects"
+          slot={SLOT.projects}
+          fallback={<ProjectCardsSkeleton count={4} />}
+        >
+          <ActiveProjectsSection />
+        </Section>
 
-        <div className="flex flex-col gap-4">
-          <Card>
-            <CardHeader className="flex-row items-center justify-between">
-              <CardTitle className="text-sm">Active projects</CardTitle>
-              <Link href="/projects">
-                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
-                  All <ArrowUpRight className="ml-1 size-3.5" />
-                </Button>
-              </Link>
-            </CardHeader>
-            <CardContent>
-              {projectSummary.active === 0 ? (
-                <EmptyState
-                  icon={FolderPlus}
-                  title="No active projects"
-                  description="Create your first project to get started."
-                />
-              ) : (
-                <ProjectsProgress />
-              )}
-            </CardContent>
-          </Card>
+        <Section
+          title="Recent activity"
+          slot={SLOT.activity}
+          fallback={<TimelineSkeleton rows={5} />}
+        >
+          <ActivityFeed />
+        </Section>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">Recent notes</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {recentNotes.length === 0 ? (
-                <EmptyState
-                  title="No notes yet"
-                  description="Capture ideas in notes from the Notes page."
-                />
-              ) : (
-                <ul>
-                  {recentNotes.map((note) => (
-                    <li
-                      key={note.id}
-                      className="border-b border-border/50 py-2 last:border-0"
-                    >
-                      <Link href={`/notes/${note.id}`}>
-                        <p className="truncate text-sm font-medium hover:underline">
-                          {note.title}
-                        </p>
-                        <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
-                          {note.content}
-                        </p>
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+        <Section
+          title="Productivity"
+          slot={SLOT.productivity}
+          fallback={<ChartSkeleton />}
+        >
+          <ProductivityCard />
+        </Section>
+
+        <Section
+          title="Recent notes"
+          slot={SLOT.notes}
+          fallback={<ListSkeleton rows={5} />}
+        >
+          <RecentNotes />
+        </Section>
+
+        <Section
+          title="Calendar"
+          slot={SLOT.calendar}
+          fallback={<CalendarSkeleton />}
+        >
+          <CalendarWidget />
+        </Section>
+
+        <Section
+          title="Storage"
+          slot={SLOT.storage}
+          fallback={<StorageSkeleton />}
+        >
+          <StorageOverview />
+        </Section>
+
+        <Section
+          title="System"
+          slot={SLOT.system}
+          fallback={<PanelSkeleton />}
+        >
+          <SystemStatus />
+        </Section>
       </div>
     </div>
   );

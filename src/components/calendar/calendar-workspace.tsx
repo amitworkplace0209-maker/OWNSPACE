@@ -1,112 +1,161 @@
 "use client";
 
-import { useRouter, usePathname } from "next/navigation";
-import { useActionState, useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Plus, Pencil, Trash2 } from "lucide-react";
+import * as React from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useActionState, useTransition } from "react";
+import { toast } from "sonner";
+import {
+  CalendarClock,
+  CalendarDays,
+  CalendarRange,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Flag,
+  ListTodo,
+  Plus,
+  TriangleAlert,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { FormField } from "@/components/shared/form-field";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
-import { EmptyState } from "@/components/shared/empty-state";
-import { createEventAction, updateEventAction, deleteEventAction } from "@/lib/actions/calendar";
-import { EVENT_TYPES } from "@/types";
+import { StatStrip, type StatStripItem } from "@/components/shared/stat-strip";
+import { WorkspaceToolbar } from "@/components/shared/workspace-toolbar";
+import { ColorSelector } from "@/components/project-creator/color-selector";
+import {
+  AgendaView,
+  DayView,
+  MonthView,
+  WeekView,
+} from "@/components/calendar/calendar-views";
+import {
+  EVENT_TYPE_COLORS,
+  SOURCE_STYLES,
+  itemColor,
+  shiftDays,
+  shiftMonths,
+  startOfWeek,
+  type CalendarFilterState,
+} from "@/lib/calendar-logic";
+import { createEventAction, deleteEventAction, updateEventAction } from "@/lib/actions/calendar";
 import { formatTime, toIsoSubmit } from "@/lib/format";
+import { EVENT_TYPES, type CalendarEvent, type Project } from "@/types";
+import type { CalendarBundle, CalendarItem, CalendarSource } from "@/lib/dal/calendar-bundle";
 import { cn } from "cn";
-import type { CalendarEvent, Project } from "@/types";
 
 type EventFormState = { error?: string; data?: { id: string } };
 
-const eventTypeLabels: Record<string, string> = {
+const EVENT_TYPE_LABELS: Record<string, string> = {
   event: "Event",
   meeting: "Meeting",
   appointment: "Appointment",
   personal: "Personal",
 };
 
-const eventColors: Record<string, string> = {
-  event: "bg-sky-500",
-  meeting: "bg-violet-500",
-  appointment: "bg-amber-500",
-  personal: "bg-emerald-500",
+const SOURCE_ICONS: Record<CalendarSource, typeof ListTodo> = {
+  event: CalendarDays,
+  task: ListTodo,
+  reminder: CalendarClock,
+  milestone: Flag,
 };
 
-function monthStart(year: number, month: number): Date {
-  return new Date(year, month, 1);
-}
+const SOURCE_ORDER: CalendarSource[] = ["event", "task", "reminder", "milestone"];
 
-function shiftMonth(month: string, delta: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const next = new Date(y, m - 1 + delta, 1);
-  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
-}
+type ViewMode = "month" | "week" | "day" | "agenda";
 
-function toLocalInput(iso: string | null): string {
-  if (!iso) return "";
-  return iso.slice(0, 16);
-}
+const VIEW_OPTIONS: Array<{ value: ViewMode; label: string; icon: React.ReactNode }> = [
+  { value: "month", label: "Month", icon: <CalendarDays className="size-4" /> },
+  { value: "week", label: "Week", icon: <CalendarRange className="size-4" /> },
+  { value: "day", label: "Day", icon: <Clock className="size-4" /> },
+  { value: "agenda", label: "Agenda", icon: <ListTodo className="size-4" /> },
+];
 
+/**
+ * Calendar.
+ *
+ * Reads one `CalendarBundle` — events, task deadlines, reminders and milestones
+ * projected into a single list — so all four views agree about what is on a
+ * day. The old version queried only `calendar_events`, which meant a task due
+ * today simply did not appear on the calendar at all.
+ */
 export function CalendarWorkspace({
-  events,
+  bundle,
   projects,
   initialMonth,
+  todayIso,
+  focusId,
 }: {
-  events: CalendarEvent[];
+  bundle: CalendarBundle;
   projects: Project[];
   initialMonth: string;
+  todayIso: string;
+  /** Set when the user arrived from a notification, to open one item. */
+  focusId?: string | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [month, setMonth] = useState(initialMonth);
-  const [selectedDate, setSelectedDate] = useState<string>(() => {
-    const [y, m] = initialMonth.split("-").map(Number);
-    const now = new Date();
-    if (now.getFullYear() === y && now.getMonth() === m - 1) {
-      return now.toISOString().slice(0, 10);
-    }
-    return `${initialMonth}-01`;
-  });
-  const [eventOpen, setEventOpen] = useState(false);
-  const [editing, setEditing] = useState<CalendarEvent | null>(null);
 
-  const year = Number(month.slice(0, 4));
-  const monthIndex = Number(month.slice(5, 7)) - 1;
-
-  function navigate(newMonth: string) {
-    setMonth(newMonth);
-    router.push(`${pathname}?month=${newMonth}`);
-  }
-
-  const relevant = useMemo(
-    () =>
-      events.filter((e) => {
-        const d = new Date(e.starts_at);
-        return d.getMonth() === monthIndex && d.getFullYear() === year;
-      }),
-    [events, monthIndex, year]
+  const [month, setMonth] = React.useState(initialMonth);
+  const [selectedDate, setSelectedDate] = React.useState(todayIso);
+  const [view, setView] = React.useState<ViewMode>("month");
+  const [query, setQuery] = React.useState("");
+  const [sources, setSources] = React.useState<CalendarSource[]>([]);
+  const [projectId, setProjectId] = React.useState("");
+  const [eventOpen, setEventOpen] = React.useState(false);
+  const [editing, setEditing] = React.useState<CalendarEvent | null>(null);
+  const [detail, setDetail] = React.useState<CalendarItem | null>(() =>
+    // Arriving from a notification deep-links one item. The bundle is already
+    // resolved on first render, so this resolves at init instead of in an effect.
+    bundle.items.find((item) => item.id === focusId) ?? null
   );
 
-  const firstDay = monthStart(year, monthIndex).getDay();
-  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-  const cells: (Date | null)[] = [
-    ...Array(firstDay).fill(null),
-    ...Array.from({ length: daysInMonth }, (_, i) => new Date(year, monthIndex, i + 1)),
-  ];
+  // View preference is read once, after hydration, through a rAF so it never
+  // fights React over the server-rendered markup.
+  React.useEffect(() => {
+    const saved = window.localStorage.getItem("ownspece:calendar:view") as ViewMode | null;
+    if (saved && VIEW_OPTIONS.some((option) => option.value === saved)) {
+      const id = window.requestAnimationFrame(() => setView(saved));
+      return () => window.cancelAnimationFrame(id);
+    }
+  }, []);
 
-  function prevMonth() { navigate(shiftMonth(month, -1)); }
-  function nextMonth() { navigate(shiftMonth(month, 1)); }
-  function today() {
-    const now = new Date();
-    const m = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-    setMonth(m);
-    setSelectedDate(now.toISOString().slice(0, 10));
-    router.push(`${pathname}?month=${m}`);
+  function changeView(next: string) {
+    setView(next as ViewMode);
+    window.localStorage.setItem("ownspece:calendar:view", next);
   }
 
-  const dayEvents = relevant
-    .filter((e) => e.starts_at.slice(0, 10) === selectedDate)
-    .sort((a, b) => (a.starts_at < b.starts_at ? -1 : 1));
+  function navigateMonth(next: string) {
+    setMonth(next);
+    setSelectedDate(`${next}-01`);
+    router.push(`${pathname}?month=${next}`);
+  }
+
+  function shiftDateBy(delta: number) {
+    if (view === "week") {
+      setSelectedDate((current) => shiftDays(current, delta * 7));
+      return;
+    }
+    if (view === "day") {
+      setSelectedDate((current) => shiftDays(current, delta));
+      return;
+    }
+    navigateMonth(shiftMonths(month, delta));
+  }
+
+  function goToday() {
+    setMonth(todayIso.slice(0, 7));
+    setSelectedDate(todayIso);
+    router.push(`${pathname}?month=${todayIso.slice(0, 7)}`);
+  }
 
   function openCreate(date: string) {
     setEditing(null);
@@ -114,154 +163,431 @@ export function CalendarWorkspace({
     setEventOpen(true);
   }
 
+  // A task/reminder/milestone has no edit form here, so selecting one explains
+  // what it is and links to the place that can actually change it, rather than
+  // opening a form that would not save.
+  function selectItem(item: CalendarBundle["items"][number]) {
+    if (item.source === "event") {
+      const full = bundle.items.find((entry) => entry.key === item.key);
+      if (full) setDetail(full as never);
+      return;
+    }
+    if (item.href) {
+      router.push(item.href);
+      return;
+    }
+    setSelectedDate(item.date);
+    toast(`${SOURCE_STYLES[item.source].label}: ${item.title}`);
+  }
+
+  const filter: CalendarFilterState = { query, sources, projectId, types: [] };
+
+  const statItems: StatStripItem[] = [
+    { id: "all", label: "This month", value: bundle.stats.total, icon: CalendarDays, tone: "neutral" },
+    { id: "today", label: "Today", value: bundle.stats.today, icon: Clock, tone: "info" },
+    { id: "week", label: "This week", value: bundle.stats.thisWeek, icon: CalendarRange, tone: "warning" },
+    {
+      id: "overdue",
+      label: "Overdue",
+      value: bundle.stats.overdue,
+      icon: TriangleAlert,
+      tone: bundle.stats.overdue > 0 ? "danger" : "success",
+    },
+    {
+      id: "allDay",
+      label: "All-day",
+      value: bundle.stats.allDay,
+      icon: Flag,
+      tone: "success",
+    },
+  ];
+
+  const stepLabel =
+    view === "month"
+      ? new Date(`${month}-01T00:00:00`).toLocaleDateString(undefined, {
+          month: "long",
+          year: "numeric",
+        })
+      : view === "week"
+        ? rangeLabel(shiftDays(startOfWeek(selectedDate), 0), shiftDays(startOfWeek(selectedDate), 6))
+        : view === "day"
+          ? new Date(`${selectedDate}T00:00:00`).toLocaleDateString(undefined, {
+              weekday: "long",
+              month: "long",
+              day: "numeric",
+            })
+          : "Upcoming";
+
+  const projectOptions = [
+    { value: "", label: "All projects" },
+    ...projects.map((project) => ({ value: project.id, label: project.name })),
+  ];
+
   return (
     <div className="flex flex-col gap-4">
+      <StatStrip items={statItems} />
+
+      <WorkspaceToolbar
+        filters={[
+          // Source filtering lives in the SourceToggles chips below: they are
+          // real toggles, whereas a <select> can only ever add a source and
+          // never remove it again.
+          ...(projects.length > 0
+            ? [
+                {
+                  param: "project",
+                  label: "Project",
+                  value: projectId,
+                  options: projectOptions,
+                },
+              ]
+            : []),
+        ]}
+        onFilterChange={(param, value) => {
+          if (param === "project") setProjectId(value);
+        }}
+        search={{
+          value: query,
+          onChange: setQuery,
+          placeholder: "Search events, tasks, projects…",
+          label: "Search the calendar",
+        }}
+        view={{ value: view, onChange: changeView, options: VIEW_OPTIONS }}
+        actions={
+          <>
+            <SourceToggles
+              active={sources}
+              counts={bundle.stats.bySource}
+              onToggle={(source) =>
+                setSources((current) =>
+                  current.includes(source)
+                    ? current.filter((entry) => entry !== source)
+                    : [...current, source]
+                )
+              }
+            />
+            <Button onClick={() => openCreate(selectedDate)}>
+              <Plus /> New event
+            </Button>
+          </>
+        }
+      />
+
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <button onClick={prevMonth} aria-label="Previous month" className="rounded-lg border p-2 hover:bg-accent"><ChevronLeft className="size-4" /></button>
-          <button onClick={nextMonth} aria-label="Next month" className="rounded-lg border p-2 hover:bg-accent"><ChevronRight className="size-4" /></button>
-          <button onClick={today} aria-label="Go to today" className="rounded-lg border px-3 py-1.5 text-sm hover:bg-accent">Today</button>
-          <h2 className="ml-1 text-lg font-semibold">
-            {new Date(`${month}-01T00:00:00`).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-          </h2>
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="outline"
+            size="icon-sm"
+            onClick={() => shiftDateBy(-1)}
+            aria-label={`Previous ${view}`}
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon-sm"
+            onClick={() => shiftDateBy(1)}
+            aria-label={`Next ${view}`}
+          >
+            <ChevronRight className="size-4" />
+          </Button>
+          <Button variant="ghost" size="sm" onClick={goToday}>
+            Today
+          </Button>
+          <h2 className="ml-1 text-lg font-semibold tracking-tight">{stepLabel}</h2>
         </div>
-        <Button onClick={() => openCreate(selectedDate)}><Plus /> New event</Button>
-      </div>
 
-      <div className="grid grid-cols-7 overflow-hidden rounded-xl border bg-card text-center text-xs text-muted-foreground">
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-          <div key={d} className="border-b border-border/60 py-2">{d}</div>
-        ))}
-        {cells.map((date, i) => {
-          if (!date) return <div key={`empty-${i}`} className="min-h-20 border-r border-b border-border/40" />;
-          const ds = date.toISOString().slice(0, 10);
-          const dayEvents = relevant.filter((e) => e.starts_at.slice(0, 10) === ds);
-          const today = ds === new Date().toISOString().slice(0, 10);
-          return (
-            <button
-              key={ds}
-              onClick={() => setSelectedDate(ds)}
-              className={cn(
-                "flex min-h-20 flex-col items-start gap-1 border-r border-b border-border/40 p-1 text-left transition hover:bg-accent/50",
-                selectedDate === ds && "bg-accent/60 ring-1 ring-inset ring-ring"
-              )}
-            >
-              <span className={cn("flex size-5 items-center justify-center rounded-full", today && "bg-primary font-semibold text-primary-foreground")}>
-                {date.getDate()}
-              </span>
-              {dayEvents.slice(0, 2).map((e) => (
-                <span key={e.id} className="flex w-full max-w-full items-center gap-1 text-[10px] leading-none">
-                  <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", eventColors[e.event_type] ?? "bg-sky-500")} />
-                  <span className="truncate">{e.title}</span>
-                </span>
-              ))}
-              {dayEvents.length > 2 ? <span className="text-[10px] text-muted-foreground">+{dayEvents.length - 2} more</span> : null}
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="flex flex-col gap-3 rounded-xl border bg-card p-4">
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold">
-            {new Date(`${selectedDate}T00:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
-          </h3>
-          <Button variant="outline" size="sm" onClick={() => openCreate(selectedDate)}><Plus /> Add</Button>
+        <div className="flex items-center gap-1.5">
+          <Button variant="outline" size="sm" onClick={() => openCreate(selectedDate)}>
+            <Plus /> Add on {view === "month" ? "1st" : "this day"}
+          </Button>
         </div>
-        {dayEvents.length === 0 ? (
-          <EmptyState title="No events that day" description="Click “Add” to schedule something." />
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {dayEvents.map((e) => (
-              <li key={e.id} className="group flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2">
-                <span className={cn("h-8 w-1 rounded-full", eventColors[e.event_type] ?? "bg-sky-500")} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{e.title}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {e.all_day ? "All day" : formatTime(e.starts_at)}
-                    {e.ends_at && !e.all_day ? <>–{formatTime(e.ends_at)}</> : null}
-                    {e.project_id ? <> · {projects.find((p) => p.id === e.project_id)?.name ?? ""}</> : null}
-                  </p>
-                </div>
-                <div className="flex shrink-0 gap-0.5 opacity-0 transition group-hover:opacity-100">
-                  <Button variant="ghost" size="icon-sm" aria-label={`Edit ${e.title}`} onClick={() => { setEditing(e); setEventOpen(true); }}>
-                    <Pencil className="size-3.5" />
-                  </Button>
-                  <DeleteEventButton event={e} onDone={() => router.refresh()} />
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
 
+      {view === "month" ? (
+        <MonthView
+          items={bundle.items}
+          selectedDate={selectedDate}
+          todayIso={todayIso}
+          filter={filter}
+          onSelectDate={setSelectedDate}
+          onSelectItem={selectItem}
+        />
+      ) : null}
+
+      {view === "week" ? (
+        <WeekView
+          items={bundle.items}
+          selectedDate={selectedDate}
+          todayIso={todayIso}
+          filter={filter}
+          onSelectDate={setSelectedDate}
+          onSelectItem={selectItem}
+        />
+      ) : null}
+
+      {view === "day" ? (
+        <DayView
+          items={bundle.items}
+          selectedDate={selectedDate}
+          todayIso={todayIso}
+          filter={filter}
+          onSelectItem={selectItem}
+        />
+      ) : null}
+
+      {view === "agenda" ? (
+        <AgendaView
+          items={bundle.items}
+          todayIso={todayIso}
+          filter={filter}
+          onSelectItem={selectItem}
+        />
+      ) : null}
+
+      {/* Keyed by target: switching between "new" and "edit" remounts the form
+          with fresh state, rather than resyncing state through an effect. */}
       <EventFormDialog
+        key={editing?.id ?? "new"}
         open={eventOpen}
-        onOpenChange={(open) => { setEventOpen(open); if (!open) setEditing(null); }}
+        onOpenChange={(open) => {
+          setEventOpen(open);
+          if (!open) setEditing(null);
+        }}
         projects={projects}
         event={editing}
-        defaultStartsAt={selectedDate}
+        defaultDate={selectedDate}
+      />
+
+      <EventDetailDialog
+        key={detail?.key ?? "none"}
+        item={detail}
+        onClose={() => setDetail(null)}
+        onEdit={(event) => {
+          setDetail(null);
+          setEditing(event);
+          setEventOpen(true);
+        }}
+        onDeleted={() => {
+          setDetail(null);
+          router.refresh();
+        }}
       />
     </div>
   );
 }
 
-function DeleteEventButton({ event, onDone }: { event: CalendarEvent; onDone: () => void }) {
-  const [open, setOpen] = useState(false);
+function SourceToggles({
+  active,
+  counts,
+  onToggle,
+}: {
+  active: CalendarSource[];
+  counts: Record<CalendarSource, number>;
+  onToggle: (source: CalendarSource) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {SOURCE_ORDER.map((source) => {
+        const Icon = SOURCE_ICONS[source];
+        const isActive = active.length === 0 || active.includes(source);
+
+        return (
+          <button
+            key={source}
+            type="button"
+            onClick={() => onToggle(source)}
+            aria-pressed={isActive}
+            title={`${SOURCE_STYLES[source].label}: ${counts[source]}`}
+            className={cn(
+              "flex items-center gap-1 rounded-lg border px-2 py-1 text-xs transition",
+              isActive
+                ? "border-primary/40 bg-primary/5 text-foreground"
+                : "text-muted-foreground opacity-50"
+            )}
+          >
+            <Icon className="size-3" />
+            <span className="hidden sm:inline">{SOURCE_STYLES[source].label}</span>
+            <span className="tabular-nums">{counts[source]}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function rangeLabel(from: string, to: string): string {
+  const start = new Date(`${from}T00:00:00`);
+  const end = new Date(`${to}T00:00:00`);
+  const sameMonth = start.getMonth() === end.getMonth();
+
+  return `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${end.toLocaleDateString(
+    undefined,
+    sameMonth
+      ? { day: "numeric", year: "numeric" }
+      : { month: "short", day: "numeric", year: "numeric" }
+  )}`;
+}
+
+// ---------------------------------------------------------------------------
+// Detail dialog — only for real events; other sources link to their own page.
+// ---------------------------------------------------------------------------
+
+type DetailItem = CalendarItem;
+
+function EventDetailDialog({
+  item,
+  onClose,
+  onEdit,
+  onDeleted,
+}: {
+  item: DetailItem | null;
+  onClose: () => void;
+  onEdit: (event: CalendarEvent) => void;
+  onDeleted: () => void;
+}) {
+  const router = useRouter();
+  const [confirming, setConfirming] = React.useState(false);
+  const [pending, startTransition] = useTransition();
+
+  if (!item) return null;
+
+  const event = item as unknown as CalendarEvent;
+
   return (
     <>
-      <Button variant="ghost" size="icon-sm" aria-label={`Delete ${event.title}`} onClick={() => setOpen(true)}>
-        <Trash2 className="size-3.5" />
-      </Button>
+      <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <span
+                aria-hidden="true"
+                className="size-3 shrink-0 rounded-full"
+                style={{
+                  backgroundColor: itemColor(item) ?? EVENT_TYPE_COLORS.event,
+                }}
+              />
+              {item.title}
+            </DialogTitle>
+            <DialogDescription>
+              {EVENT_TYPE_LABELS[event.event_type] ?? "Event"}
+              {item.projectName ? ` · ${item.projectName}` : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          <dl className="flex flex-col gap-2 text-sm">
+            <Row label="When">
+              {item.allDay
+                ? "All day"
+                : `${formatTime(event.starts_at)}${event.ends_at ? ` – ${formatTime(event.ends_at)}` : ""}`}
+            </Row>
+            <Row label="Date">{new Date(`${item.date}T00:00:00`).toLocaleDateString()}</Row>
+            {event.location ? <Row label="Location">{event.location}</Row> : null}
+            {event.description ? <Row label="Notes">{event.description}</Row> : null}
+          </dl>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              Close
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={pending}
+              onClick={() => setConfirming(true)}
+            >
+              Delete
+            </Button>
+            <Button
+              onClick={() => {
+                onClose();
+                onEdit(event);
+              }}
+            >
+              Edit
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <ConfirmDialog
-        open={open}
-        onOpenChange={setOpen}
-        title="Delete this event?"
-        description={event.title}
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={`Delete "${item.title}"?`}
+        description="This permanently removes the event from your calendar."
         confirmLabel="Delete event"
         onConfirm={async () => {
-          await deleteEventAction(event.id);
-          setOpen(false);
-          onDone();
+          startTransition(async () => {
+            const result = await deleteEventAction(event.id);
+            setConfirming(false);
+            if (result.error) {
+              toast.error(result.error);
+              return;
+            }
+            toast.success("Event deleted.");
+            onDeleted();
+            router.refresh();
+          });
         }}
       />
     </>
   );
 }
 
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex gap-3">
+      <dt className="w-20 shrink-0 text-xs tracking-wide text-muted-foreground uppercase">
+        {label}
+      </dt>
+      <dd className="min-w-0 flex-1 whitespace-pre-wrap">{children}</dd>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Create / edit form
+// ---------------------------------------------------------------------------
+
 function EventFormDialog({
   open,
   onOpenChange,
   projects,
   event,
-  defaultStartsAt,
+  defaultDate,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projects: Project[];
   event: CalendarEvent | null;
-  defaultStartsAt: string;
+  defaultDate: string;
 }) {
   const router = useRouter();
   const action = event ? updateEventAction.bind(null, event.id) : createEventAction;
-  const [state, formAction, pending] = useActionState<EventFormState, FormData>(action, { error: undefined });
+  const [state, formAction, pending] = useActionState<EventFormState, FormData>(action, {
+    error: undefined,
+  });
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (state.data && !pending) {
       onOpenChange(false);
       router.refresh();
     }
   }, [state.data, pending, onOpenChange, router]);
 
-  const defaultStartIso = event?.starts_at ?? `${defaultStartsAt}T09:00`;
+  const [allDay, setAllDay] = React.useState(event?.all_day ?? false);
+  const [type, setType] = React.useState(event?.event_type ?? "event");
+  const [color, setColor] = React.useState(event?.color ?? "");
+
+  const defaultStart = event ? toLocalInput(event.starts_at) : `${defaultDate}T09:00`;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{event ? "Edit event" : "New event"}</DialogTitle>
-          <DialogDescription>Schedule a calendar event.</DialogDescription>
+          <DialogDescription>Schedule something on your calendar.</DialogDescription>
         </DialogHeader>
+
         <form
           action={(fd) => {
             const normalized = new FormData();
@@ -273,51 +599,113 @@ function EventFormDialog({
           className="flex flex-col gap-4"
         >
           <FormField label="Title" htmlFor="event-title" error={state.error}>
-            <Input id="event-title" name="title" defaultValue={event?.title ?? ""} placeholder="e.g. Design review" required />
+            <Input
+              id="event-title"
+              name="title"
+              defaultValue={event?.title ?? ""}
+              placeholder="e.g. Design review"
+              required
+            />
           </FormField>
+
           <div className="grid gap-4 sm:grid-cols-2">
             <FormField label="Starts">
-              <Input type="datetime-local" name="starts_at" defaultValue={toLocalInput(defaultStartIso) || defaultStartIso} required />
+              <Input
+                type="datetime-local"
+                name="starts_at"
+                defaultValue={defaultStart}
+                required
+              />
             </FormField>
-            <FormField label="Ends">
-              <Input type="datetime-local" name="ends_at" defaultValue={toLocalInput(event?.ends_at ?? "")} />
-            </FormField>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FormField label="Type">
-              <select name="event_type" defaultValue={event?.event_type ?? "event"} className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none dark:bg-input/30">
-                {EVENT_TYPES.map((t) => (<option key={t} value={t}>{eventTypeLabels[t]}</option>))}
-              </select>
-            </FormField>
-            <FormField label="Project">
-              <select name="project_id" defaultValue={event?.project_id ?? ""} className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none dark:bg-input/30">
-                <option value="">No project</option>
-                {projects.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
-              </select>
+            <FormField label="Ends" hint={allDay ? "Not used for all-day events" : undefined}>
+              <Input
+                type="datetime-local"
+                name="ends_at"
+                defaultValue={toLocalInput(event?.ends_at ?? "")}
+                disabled={allDay}
+              />
             </FormField>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FormField label="Location">
-              <Input name="location" defaultValue={event?.location ?? ""} placeholder="Where?" />
-            </FormField>
-            <FormField label="Color" hint="CSS color, e.g. #ff0000">
-              <Input name="color" defaultValue={event?.color ?? ""} placeholder="#10b981" />
-            </FormField>
-          </div>
+
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" name="all_day" defaultChecked={event?.all_day ?? false} className="accent-primary" />
+            <input
+              type="checkbox"
+              name="all_day"
+              checked={allDay}
+              onChange={(e) => setAllDay(e.target.checked)}
+              className="accent-primary"
+            />
             All-day event
           </label>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label="Type">
+              <select
+                name="event_type"
+                value={type}
+                onChange={(e) => setType(e.target.value as CalendarEvent["event_type"])}
+                className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none dark:bg-input/30"
+              >
+                {EVENT_TYPES.map((value) => (
+                  <option key={value} value={value}>
+                    {EVENT_TYPE_LABELS[value]}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+
+            <FormField label="Project">
+              <select
+                name="project_id"
+                defaultValue={event?.project_id ?? ""}
+                className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none dark:bg-input/30"
+              >
+                <option value="">No project</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          </div>
+
+          {/* Picked, not typed — a hex field nobody can fill in from memory. */}
+          <ColorSelector
+            value={color || EVENT_TYPE_COLORS[type] || "#0ea5e9"}
+            onChange={setColor}
+            label="Colour"
+          />
+          <input type="hidden" name="color" value={color} />
+
+          <FormField label="Location">
+            <Input
+              name="location"
+              defaultValue={event?.location ?? ""}
+              placeholder="Where?"
+            />
+          </FormField>
+
           <FormField label="Description">
             <Textarea name="description" defaultValue={event?.description ?? ""} rows={2} />
           </FormField>
-          {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
+
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={pending}>{pending ? "Saving…" : event ? "Save changes" : "Create event"}</Button>
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={pending}>
+              {pending ? "Saving…" : event ? "Save changes" : "Create event"}
+            </Button>
           </div>
         </form>
       </DialogContent>
     </Dialog>
   );
 }
+
+function toLocalInput(iso: string | null): string {
+  if (!iso) return "";
+  return iso.slice(0, 16);
+}
+

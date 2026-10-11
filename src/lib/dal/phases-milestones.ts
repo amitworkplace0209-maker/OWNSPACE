@@ -103,7 +103,7 @@ export const getAllMilestones = cache(async (): Promise<Milestone[]> => {
 
   const { data, error } = await supabase
     .from("milestones")
-    .select("*, project(id, name)")
+    .select("*, project:projects(id, name)")
     .eq("user_id", user.id)
     .not("due_date", "is", null)
     .order("due_date", { ascending: true });

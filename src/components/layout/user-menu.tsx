@@ -1,6 +1,6 @@
 "use client";
 
-import { Settings, LogOut, User } from "lucide-react";
+import { Settings, LogOut, User, Palette } from "lucide-react";
 import Link from "next/link";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -14,59 +14,83 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { signOutAction } from "@/lib/auth/actions";
+import { initials } from "@/lib/utils";
 import type { AppUser } from "@/types";
 
-function initialsOf(user: AppUser): string {
-  const fromName = user.displayName?.trim();
-  if (fromName) {
-    return fromName
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase() ?? "")
-      .join("");
-  }
-  return (user.email[0] ?? "U").toUpperCase();
-}
+/**
+ * Account menu, in two shapes: `full` for the sidebar footer, `compact` for the
+ * topbar where the avatar has to sit on its own.
+ */
+export function UserMenu({
+  user,
+  compact = false,
+}: {
+  user: AppUser;
+  compact?: boolean;
+}) {
+  const avatar = (
+    <Avatar size="sm" className="size-7">
+      <AvatarFallback className="text-xs font-medium">
+        {initials(user.displayName, user.email)}
+      </AvatarFallback>
+    </Avatar>
+  );
 
-export function UserMenu({ user }: { user: AppUser }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-9 w-full justify-start gap-2 px-2"
-            aria-label="User menu"
-          >
-            <Avatar size="sm" className="size-6">
-              <AvatarFallback className="text-xs">
-                {initialsOf(user)}
-              </AvatarFallback>
-            </Avatar>
-            <span className="min-w-0 flex-1 truncate text-left text-sm">
-              {user.displayName ?? user.email}
-            </span>
-          </Button>
+          compact ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="rounded-full"
+              aria-label="Account menu"
+            >
+              {avatar}
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-9 w-full justify-start gap-2 px-2"
+              aria-label="Account menu"
+            >
+              {avatar}
+              <span className="min-w-0 flex-1 truncate text-left text-sm">
+                {user.displayName ?? user.email}
+              </span>
+            </Button>
+          )
         }
       />
-      <DropdownMenuContent align="end" className="w-56">
+      <DropdownMenuContent align="end" className="w-60">
         <DropdownMenuGroup>
-          <DropdownMenuLabel>My Account</DropdownMenuLabel>
-          <DropdownMenuItem
-            render={
-              <Link href="/profile">
-                <User /> Profile
-              </Link>
-            }
-          />
-          <DropdownMenuItem
-            render={
-              <Link href="/settings">
-                <Settings /> Settings
-              </Link>
-            }
-          />
+          <DropdownMenuLabel className="font-normal">
+            <span className="flex min-w-0 items-center gap-2">
+              {avatar}
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate text-sm font-medium">
+                  {user.displayName ?? "Account"}
+                </span>
+                <span className="truncate text-[11px] text-muted-foreground">
+                  {user.email}
+                </span>
+              </span>
+            </span>
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem render={<Link href="/profile" />}>
+            <User /> Profile
+          </DropdownMenuItem>
+          <DropdownMenuItem render={<Link href="/settings" />}>
+            <Settings /> Settings
+          </DropdownMenuItem>
+          <DropdownMenuItem render={<Link href="/settings#appearance" />}>
+            <Palette /> Appearance
+          </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem

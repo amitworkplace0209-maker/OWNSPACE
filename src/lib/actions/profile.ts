@@ -2,10 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { getUserOrRedirect, friendlyError } from "@/lib/actions/helpers";
+import { getUserOrRedirect, friendlyError, createAdminClient } from "@/lib/actions/helpers";
 import { profileSchema, preferencesSchema, parseForm } from "@/lib/schemas";
 
-export type ProfileFormState = { error?: string };
+export type ProfileFormState = { error?: string; data?: { id: string } };
 
 export async function updateProfileAction(
   _prevState: ProfileFormState,
@@ -32,7 +32,7 @@ export async function updateProfileAction(
 
   revalidatePath("/settings");
   revalidatePath("/profile");
-  return {};
+  return { data: { id: user.id } };
 }
 
 export async function updateAvatarAction(_prev: ProfileFormState, formData: FormData): Promise<ProfileFormState> {
@@ -62,7 +62,7 @@ export async function updateAvatarAction(_prev: ProfileFormState, formData: Form
 
   revalidatePath("/settings");
   revalidatePath("/profile");
-  return {};
+  return { data: { id: user.id } };
 }
 
 export async function updatePreferencesAction(
@@ -72,15 +72,40 @@ export async function updatePreferencesAction(
   const user = await getUserOrRedirect();
   const parsed = parseForm(preferencesSchema, formData);
   if (!parsed.data) return { error: parsed.error };
-  const supabase = await createClient();
+  const supabase = await createAdminClient();
+
+  // Patch semantics: only fields present in the form data are written, so
+  // partial updates (e.g. changing only the theme or only an accent) can never
+  // clobber unrelated preferences.
+  const rawEntries = Object.entries(parsed.data).filter(([, value]) => value !== undefined);
+  // Coerce empty-string daily_note_time (invalid Postgres time type) to null.
+  const entries = rawEntries.map(([k, v]) =>
+    k === "daily_note_time" && v === "" ? [k, null] : [k, v]
+  );
+  const payload = Object.fromEntries(entries);
 
   const { error } = await supabase
     .from("user_preferences")
-    .update({ ...parsed.data })
+    .update(payload)
     .eq("user_id", user.id);
-  if (error) return { error: friendlyError(error, "Could not update preferences.") };
+  if (error) {
+    return { error: friendlyError(error, "Could not update preferences.") };
+  }
 
   revalidatePath("/settings");
   revalidatePath("/profile");
-  return {};
+  return { data: { id: user.id } };
+}
+
+const THEMES = ["light", "dark", "amoled", "system"] as const;
+
+export async function setThemeAction(theme: string): Promise<void> {
+  const user = await getUserOrRedirect();
+  if (!(THEMES as readonly string[]).includes(theme)) return;
+  const supabase = await createClient();
+  await supabase
+    .from("user_preferences")
+    .update({ theme })
+    .eq("user_id", user.id);
+  revalidatePath("/settings");
 }

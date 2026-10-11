@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { FileText, Plus, Pencil, Trash2, Eye, BookOpen, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import { VersionHistoryDialog } from "@/components/shared/version-history-dialog
 import { createWikiPageAction, updateWikiPageAction, deleteWikiPageAction, restoreWikiPageVersionAction } from "@/lib/actions/wiki";
 import { formatRelativeTime } from "@/lib/format";
 import { cn } from "cn";
+import ReactMarkdown from "react-markdown";
 import type { WikiPage, WikiVersion } from "@/types";
 
 type WikiFormState = { error?: string; data?: { id: string; slug: string } };
@@ -26,16 +27,20 @@ function slugify(title: string): string {
 }
 
 export function ProjectWiki({ projectId, pages, readOnly = false, versionsByPage = {} }: { projectId: string; pages: WikiPage[]; readOnly?: boolean; versionsByPage?: Record<string, WikiVersion[]> }) {
-  const [selectedId, setSelectedId] = useState<string | null>(pages[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const params = useSearchParams();
+  useEffect(() => {
+    const slug = new URLSearchParams(params.toString()).get("page");
+    const id = pages.find((p) => p.slug === slug)?.id ?? pages[0]?.id ?? null;
+    window.requestAnimationFrame(() => setSelectedId(id));
+  }, [pages, params]);
   const selected = pages.find((p) => p.id === selectedId) ?? null;
-
+  const router = useRouter();
   const [creating, setCreating] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftSlug, setDraftSlug] = useState("");
   const [editing, setEditing] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-
-  const router = useRouter();
 
   if (creating) {
     return (
@@ -91,13 +96,13 @@ export function ProjectWiki({ projectId, pages, readOnly = false, versionsByPage
         <ul className="flex flex-col gap-0.5">
           {pages.map((p) => (
             <li key={p.id}>
-              <button
-                onClick={() => { setSelectedId(p.id); setEditing(false); }}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition",
-                  p.id === selectedId ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"
-                )}
-              >
+               <button
+                 onClick={() => { router.replace(`?page=${p.slug}`); setEditing(false); }}
+                 className={cn(
+                   "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition",
+                   p.id === selectedId ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"
+                 )}
+               >
                 <FileText className="size-3.5 shrink-0" />
                 <span className="truncate">{p.title}</span>
               </button>
@@ -137,9 +142,9 @@ export function ProjectWiki({ projectId, pages, readOnly = false, versionsByPage
                 </div>
               ) : null}
             </div>
-            <div className="max-w-none border-t pt-4 text-sm leading-relaxed text-foreground">
-              {selected.content.trim() ? (
-                <div className="whitespace-pre-wrap">{selected.content}</div>
+            <div className="max-w-none border-t pt-4 text-sm leading-relaxed text-foreground [&_h1]:text-xl [&_h2]:text-lg [&_h3]:text-base [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:rounded [&_table]:border [&_table]:border-border [&_th]:border-border [&_td]:border-border">
+              {selected.content?.trim() ? (
+                <ReactMarkdown>{selected.content}</ReactMarkdown>
               ) : (
                 <p className="text-muted-foreground">This page has no content yet.</p>
               )}

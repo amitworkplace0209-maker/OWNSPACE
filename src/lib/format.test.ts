@@ -9,6 +9,10 @@ import {
   humanize,
   isOverdueDate,
   toIsoSubmit,
+  formatCurrency,
+  formatNumber,
+  formatPercent,
+  formatSignedCurrency,
 } from "./format";
 
 describe("formatDate", () => {
@@ -105,5 +109,91 @@ describe("text edge cases", () => {
 
   it("isOverdueDate returns false for null", () => {
     expect(isOverdueDate(null)).toBe(false);
+  });
+});
+const RS = "\u20B9";
+
+describe("formatCurrency", () => {
+  it("defaults to rupees", () => {
+    expect(formatCurrency(1500)).toContain(RS);
+    expect(formatCurrency(1500)).toContain("1,500");
+  });
+
+  it("groups in the Indian 2-2-3 pattern", () => {
+    // Twelve lakh fifty-six thousand. Under en-US this would read
+    // "?1,256,000.00", which looks wrong to every Indian reader.
+    expect(formatCurrency(1256000)).toBe(`${RS}12,56,000.00`);
+    expect(formatCurrency(123456789)).toBe(`${RS}12,34,56,789.00`);
+  });
+
+  it("keeps four digits ungrouped beyond the first thousand", () => {
+    expect(formatCurrency(9999)).toBe(`${RS}9,999.00`);
+  });
+
+  it("renders lakh and crore in compact mode", () => {
+    expect(formatCurrency(1256000, "INR", { compact: true })).toBe(`${RS}12.6L`);
+    expect(formatCurrency(123456789, "INR", { compact: true })).toBe(`${RS}12.3Cr`);
+  });
+
+  it("supports other currencies", () => {
+    expect(formatCurrency(1500, "USD")).toContain("1,500");
+  });
+
+  it("returns the fallback for null, undefined and NaN", () => {
+    expect(formatCurrency(null)).toBe("—");
+    expect(formatCurrency(undefined)).toBe("—");
+    expect(formatCurrency(Number.NaN)).toBe("—");
+    expect(formatCurrency(null, "INR", { fallback: "0" })).toBe("0");
+  });
+
+  it("survives an unknown currency code", () => {
+    // An unknown code throws inside Intl; a bare number beats an error.
+    expect(formatCurrency(1000, "NOTACODE")).toContain("1000.00");
+  });
+});
+
+describe("formatSignedCurrency", () => {
+  it("prefixes income and expenses with their direction", () => {
+    expect(formatSignedCurrency(500).startsWith("+")).toBe(true);
+    expect(formatSignedCurrency(-500).startsWith("-")).toBe(true);
+  });
+
+  it("shows zero without a sign", () => {
+    expect(formatSignedCurrency(0).startsWith("+")).toBe(false);
+    expect(formatSignedCurrency(0).startsWith("-")).toBe(false);
+  });
+
+  it("is dash for a missing value", () => {
+    expect(formatSignedCurrency(null)).toBe("—");
+  });
+});
+
+describe("formatPercent", () => {
+  it("computes a share", () => {
+    expect(formatPercent(25, 100)).toBe("25%");
+    expect(formatPercent(1, 3, 1)).toBe("33.3%");
+  });
+
+  it("returns 0% for an empty total rather than NaN", () => {
+    expect(formatPercent(10, 0)).toBe("0%");
+  });
+
+  it("handles a negative part", () => {
+    expect(formatPercent(-25, 100)).toBe("-25%");
+  });
+});
+
+describe("formatNumber", () => {
+  it("groups without a currency symbol", () => {
+    expect(formatNumber(1234567)).toBe("12,34,567");
+  });
+
+  it("falls back for missing values", () => {
+    expect(formatNumber(null)).toBe("0");
+    expect(formatNumber(undefined, "—")).toBe("—");
+  });
+
+  it("keeps decimals for fractional quantities", () => {
+    expect(formatNumber(12.5)).toBe("12.5");
   });
 });

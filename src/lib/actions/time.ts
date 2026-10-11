@@ -232,7 +232,7 @@ export async function cancelPomodoroAction(sessionId: string): Promise<{ error?:
   return {};
 }
 
-export type PomodoroSettingsFormState = { error?: string };
+export type PomodoroSettingsFormState = { error?: string; data?: { id: string } };
 
 export async function updatePomodoroSettingsAction(
   _prevState: PomodoroSettingsFormState,
@@ -251,5 +251,5 @@ export async function updatePomodoroSettingsAction(
 
   revalidatePath("/settings");
   revalidatePath("/time");
-  return {};
+  return { data: { id: user.id } };
 }

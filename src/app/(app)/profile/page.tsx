@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { requireUser, getProfile } from "@/lib/dal";
 import { createClient } from "@/lib/supabase/server";
 import { formatDate } from "@/lib/format";
+import { initials } from "@/lib/utils";
 import { PageHeader } from "@/components/shared/page-header";
 import {
   Avatar,
@@ -22,18 +23,6 @@ export const metadata: Metadata = {
 };
 
 export const dynamic = "force-dynamic";
-
-function initials(displayName: string | null | undefined, email: string): string {
-  const name = displayName?.trim();
-  if (name) {
-    return name
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((p) => p[0]?.toUpperCase() ?? "")
-      .join("");
-  }
-  return (email[0] ?? "U").toUpperCase();
-}
 
 export default async function ProfilePage() {
   const user = await requireUser();

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { MessageSquare, ListChecks, GitBranch, Tag as TagIcon, Plus, Trash2, Pencil, CheckCircle2, Circle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -50,7 +50,13 @@ export function TaskDetailView({
   readOnly?: boolean;
 }) {
   const router = useRouter();
-  const [editOpen, setEditOpen] = useState(false);
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  // Arriving with ?edit=1 (the dashboard's "Edit task" action) opens the dialog
+  // from the very first render, so there is no flash of the read-only view.
+  const [editOpen, setEditOpen] = useState(
+    () => searchParams.get("edit") === "1"
+  );
   const [commentDraft, setCommentDraft] = useState("");
   const [depSelect, setDepSelect] = useState("");
 
@@ -63,6 +69,15 @@ export function TaskDetailView({
   useEffect(() => {
     if (stateHasResult(commentState) || stateHasResult(checklistState)) router.refresh();
   }, [commentState, checklistState, router]);
+
+  // Clear ?edit=1 so a refresh or a back-navigation doesn't reopen the dialog.
+  useEffect(() => {
+    if (searchParams.get("edit") !== "1") return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("edit");
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname);
+  }, [searchParams, pathname, router]);
 
   const canDep = useMemo(() => {
     const exclude = new Set([task.id, ...task.dependencies.map((d) => d.id), ...task.dependents.map((d) => d.id)]);

@@ -1,4 +1,5 @@
 import { getProjects } from "@/lib/dal/projects";
+import { getFiles } from "@/lib/dal/time-files";
 import { getTags } from "@/lib/dal/tags";
 import { requireUser } from "@/lib/dal";
 import { PageHeader } from "@/components/shared/page-header";
@@ -16,9 +17,12 @@ export default async function ProjectsPage({
   await requireUser();
   const params = await searchParams;
 
-  const [projects, tags] = await Promise.all([
-    getProjects({ status: params.status && params.status !== "all" ? (params.status as "active") : undefined }),
+  const [projects, tags, files] = await Promise.all([
+    getProjects(),
     getTags(),
+    // Step 10 can only attach files that already exist in storage, so the
+    // picker needs the list up front.
+    getFiles({ limit: 200 }),
   ]);
 
   return (
@@ -30,7 +34,14 @@ export default async function ProjectsPage({
       <ProjectsWorkspace
         projects={projects}
         tags={tags}
+        files={files.map((file) => ({
+          id: file.id,
+          name: file.name,
+          mime_type: file.mime_type,
+          size_bytes: file.size_bytes,
+        }))}
         initialStatus={params.status ?? "all"}
+        openWizard={params.new === "1"}
       />
     </div>
   );

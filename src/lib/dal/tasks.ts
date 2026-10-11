@@ -4,6 +4,8 @@ import { cache } from "react";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/dal";
+import { computeTodayProgress, todayIsoDate, type TodayProgress } from "@/lib/dashboard-logic";
+import { getAnalyticsSnapshot } from "@/lib/dal/analytics";
 import type {
   Checklist,
   ChecklistItem,
@@ -16,6 +18,8 @@ import type {
 export type TaskWithTagNames = Task & {
   tag_names: string[];
   project_name: string;
+  /** Project accent, so list rows can show a colour dot without a second query. */
+  project_color: string | null;
 };
 
 export type TaskListOptions = {
@@ -40,9 +44,10 @@ export const getTasks = cache(
       .from("tasks")
       .select(
         `
-        id, user_id, project_id, phase_id, parent_task_id, title, description,
-        status, priority, progress, due_date, reminder_at, sort_order, created_at, updated_at,
-        project!inner(name, color),
+        id, user_id, project_id, phase_id, node_id, parent_task_id, title, description,
+        status, priority, progress, start_date, due_date, reminder_at,
+        estimated_minutes, sort_order, created_at, updated_at,
+        project:projects!inner(name, color),
         tags:task_tags(tags(name))
       `
       )
@@ -95,11 +100,12 @@ export const getTasks = cache(
     const { data, error } = await query;
     if (error || !data) return [];
 
-    let tasks = (data as unknown as Array<Task & { tags: { name: string }[]; project: { name: string } }>).map(
+    let tasks = (data as unknown as Array<Task & { tags: { name: string }[]; project: { name: string; color: string | null } }>).map(
       (t) => ({
         ...t,
         tag_names: (t.tags ?? []).map((x) => x.name),
         project_name: t.project?.name ?? "",
+        project_color: t.project?.color ?? null,
       })
     ) as TaskWithTagNames[];
 
@@ -157,7 +163,7 @@ export const getTask = cache(async (taskId: string): Promise<TaskDetail> => {
       supabase
         .from("tasks")
         .select(
-          `*, project!inner(name, color), tags:task_tags(tags(name))`
+          `*, project:projects!inner(name, color), tags:task_tags(tags(name))`
         )
         .eq("user_id", user.id)
         .eq("id", taskId)
@@ -226,44 +232,26 @@ export type TaskSummary = {
 export const getTaskSummary = cache(async (): Promise<TaskSummary> => {
   const user = await requireUser();
   const supabase = await createClient();
+  const snapshot = await getAnalyticsSnapshot();
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = todayIsoDate();
+  const { count } = await supabase
+    .from("tasks")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", user.id)
+    .gte("due_date", todayStr)
+    .in("status", ["backlog", "todo", "in_progress"]);
 
-  const [statusRes, todayRes, upcomingRes] = await Promise.all([
-    supabase.from("tasks").select("status, due_date").eq("user_id", user.id),
-    supabase
-      .from("tasks")
-      .select("due_date, status")
-      .eq("user_id", user.id)
-      .eq("due_date", todayStr),
-    supabase
-      .from("tasks")
-      .select("due_date", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .gte("due_date", todayStr)
-      .in("status", ["backlog", "todo", "in_progress"]),
-  ]);
-
-  const summary: TaskSummary = {
-    total: statusRes.data?.length ?? 0,
-    byStatus: { backlog: 0, todo: 0, in_progress: 0, done: 0, cancelled: 0 },
-    today: todayRes.data?.length ?? 0,
-    overdue: 0,
-    upcoming: upcomingRes.count ?? 0,
+  // Task totals and the overdue rollup already come from getAnalyticsSnapshot()
+  // (which the dashboard renders alongside this), so re-deriving them here
+  // avoids scanning the tasks table twice in the same request.
+  return {
+    total: snapshot.tasks.total,
+    byStatus: snapshot.tasks.byStatus,
+    today: snapshot.tasks.today,
+    overdue: snapshot.tasks.overdue,
+    upcoming: count ?? 0,
   };
-
-  for (const t of statusRes.data ?? []) {
-    summary.byStatus[t.status as TaskStatus] += 1;
-    if (
-      t.due_date &&
-      t.due_date < todayStr &&
-      ["backlog", "todo", "in_progress"].includes(t.status)
-    ) {
-      summary.overdue += 1;
-    }
-  }
-
-  return summary;
 });
 
 export interface DueTask {
@@ -272,7 +260,8 @@ export interface DueTask {
   due_date: string | null;
   status: TaskStatus;
   priority: Priority;
-  project_name: string;
+  project_id: string | null;
+  project_name: string | null;
 }
 
 export const getTasksDueToday = cache(async (): Promise<DueTask[]> => {
@@ -282,7 +271,7 @@ export const getTasksDueToday = cache(async (): Promise<DueTask[]> => {
 
   const { data, error } = await supabase
     .from("tasks")
-    .select("id, title, due_date, status, priority, project!inner(name)")
+    .select("id, title, due_date, status, priority, project_id, project:projects!inner(name)")
     .eq("user_id", user.id)
     .eq("due_date", todayStr)
     .order("priority", { ascending: false });
@@ -300,7 +289,7 @@ export const getTasksOverdue = cache(async (): Promise<DueTask[]> => {
 
   const { data, error } = await supabase
     .from("tasks")
-    .select("id, title, due_date, status, priority, project!inner(name)")
+    .select("id, title, due_date, status, priority, project_id, project:projects!inner(name)")
     .eq("user_id", user.id)
     .lt("due_date", todayStr)
     .in("status", ["backlog", "todo", "in_progress"])
@@ -319,7 +308,7 @@ export const getTasksDueInRange = cache(
 
     const { data, error } = await supabase
       .from("tasks")
-      .select("id, title, due_date, status, priority, project!inner(name)")
+      .select("id, title, due_date, status, priority, project_id, project:projects!inner(name)")
       .eq("user_id", user.id)
       .not("due_date", "is", null)
       .gte("due_date", fromIso)
@@ -330,5 +319,182 @@ export const getTasksDueInRange = cache(
     return (data as unknown as Array<Omit<DueTask, "project_name"> & { project: { name: string } }>).map(
       (t) => ({ ...t, project_name: t.project.name, due_date: t.due_date! })
     );
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Dashboard: today's work
+// ---------------------------------------------------------------------------
+
+export type TodayWork = {
+  /** Every task due today, completed ones included — drives the progress bar. */
+  dueToday: DueTask[];
+  /** Open tasks whose due date is before today. */
+  overdue: DueTask[];
+  /** Open tasks currently in progress. */
+  inProgress: DueTask[];
+  /** Open tasks marked high or urgent priority. */
+  highPriority: DueTask[];
+  /** Real completion figures for the tasks due today. */
+  progress: TodayProgress;
+};
+
+const DUE_TASK_SELECT =
+  "id, title, due_date, status, priority, project_id, project:projects!inner(name)";
+
+type RawDueTask = Omit<DueTask, "project_name"> & { project: { name: string } };
+
+function toDueTasks(rows: RawDueTask[] | null): DueTask[] {
+  if (!rows) return [];
+  return rows.map((t) => ({ ...t, project_name: t.project.name }));
+}
+
+/**
+ * Everything the "Today's work" section needs, fetched once per request.
+ *
+ * The due-today and overdue lists reuse the existing cached getters so a
+ * dashboard render still costs one query each; only the two extra slices
+ * (in progress, high priority) are new. Each query is served by an existing
+ * index on `tasks_user_status_idx` / `tasks_user_due_idx`.
+ */
+export const getTodayWork = cache(async (): Promise<TodayWork> => {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const [dueToday, overdue, inProgressRes, highPriorityRes] = await Promise.all([
+    getTasksDueToday(),
+    getTasksOverdue(),
+    supabase
+      .from("tasks")
+      .select(DUE_TASK_SELECT)
+      .eq("user_id", user.id)
+      .eq("status", "in_progress")
+      .order("updated_at", { ascending: false })
+      .limit(6),
+    supabase
+      .from("tasks")
+      .select(DUE_TASK_SELECT)
+      .eq("user_id", user.id)
+      .in("status", ["backlog", "todo", "in_progress"])
+      .in("priority", ["high", "urgent"])
+      .order("due_date", { ascending: true, nullsFirst: false })
+      .limit(6),
+  ]);
+
+  return {
+    dueToday,
+    overdue,
+    inProgress: toDueTasks(inProgressRes.data as RawDueTask[] | null),
+    highPriority: toDueTasks(highPriorityRes.data as RawDueTask[] | null),
+    progress: computeTodayProgress(dueToday),
+  };
+});
+export type TaskStats = {
+  total: number;
+  dueToday: number;
+  overdue: number;
+  inProgress: number;
+  completedToday: number;
+  unassignedDue: number;
+  /** Completion rate across everything not cancelled. */
+  completionRate: number;
+  byStatus: Record<string, number>;
+  byPriority: Record<string, number>;
+};
+
+/**
+ * Headline counts for the tasks page.
+ *
+ * Computed in one pass in SQL-free JS over the same rows the list already
+ * fetched, rather than a second aggregate query, so the numbers can never
+ * disagree with what is rendered underneath them.
+ */
+export const getTaskStats = cache(
+  async (options: { projectId?: string; query?: string } = {}): Promise<TaskStats> => {
+    const tasks = await getTasks({
+      projectId: options.projectId,
+      query: options.query,
+      due: "all",
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const live = ["todo", "in_progress", "backlog"];
+
+    const byStatus: Record<string, number> = {};
+    const byPriority: Record<string, number> = {};
+
+    let dueToday = 0;
+    let overdue = 0;
+    let inProgress = 0;
+    let completedToday = 0;
+    let unassignedDue = 0;
+    let done = 0;
+    let countable = 0;
+
+    for (const task of tasks) {
+      byStatus[task.status] = (byStatus[task.status] ?? 0) + 1;
+      byPriority[task.priority] = (byPriority[task.priority] ?? 0) + 1;
+
+      const isLive = live.includes(task.status);
+
+      if (isLive) {
+        countable += 1;
+        if (task.status === "done") done += 1;
+      }
+      if (task.status === "in_progress") inProgress += 1;
+      if (isLive && task.due_date === today) dueToday += 1;
+      if (isLive && task.due_date && task.due_date < today) overdue += 1;
+      if (isLive && task.due_date && !task.project_id) unassignedDue += 1;
+      if (
+        task.status === "done" &&
+        task.updated_at.slice(0, 10) === today
+      ) {
+        completedToday += 1;
+      }
+    }
+
+    return {
+      total: tasks.length,
+      dueToday,
+      overdue,
+      inProgress,
+      completedToday,
+      unassignedDue,
+      completionRate: countable === 0 ? 0 : Math.round((done / countable) * 100),
+      byStatus,
+      byPriority,
+    };
+  }
+);
+
+/**
+ * Subtask rollup keyed by parent task id.
+ *
+ * One query for the whole page rather than a count per row, and only for ids
+ * that are actually parents - otherwise this costs nothing on a flat list.
+ */
+export const getSubtaskProgress = cache(
+  async (parentIds: string[]): Promise<Record<string, { total: number; done: number }>> => {
+    if (parentIds.length === 0) return {};
+
+    const user = await requireUser();
+    const supabase = await createClient();
+
+    const { data, error } = await supabase
+      .from("tasks")
+      .select("parent_task_id, status")
+      .eq("user_id", user.id)
+      .in("parent_task_id", parentIds);
+
+    if (error || !data) return {};
+
+    const result: Record<string, { total: number; done: number }> = {};
+    for (const row of data as Array<{ parent_task_id: string; status: string }>) {
+      const bucket = result[row.parent_task_id] ?? { total: 0, done: 0 };
+      bucket.total += 1;
+      if (row.status === "done") bucket.done += 1;
+      result[row.parent_task_id] = bucket;
+    }
+    return result;
   }
 );

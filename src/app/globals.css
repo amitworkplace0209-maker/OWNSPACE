@@ -2,14 +2,16 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:is(.dark, .amoled, .dark *, .amoled *));
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  --font-heading: var(--font-geist-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -27,6 +29,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -39,6 +42,11 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --color-accent-alt: var(--primary-alt);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -49,49 +57,85 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  /* Declared so the browser canvas, scrollbars and form controls render light
+     before the theme script runs. Without it a device whose OS is set to dark
+     paints a dark canvas first and the app looks stuck in dark mode for a
+     frame. next-themes overrides this with an inline style on <html>, and the
+     `.dark` / `.amoled` rules below take over for those themes. */
+  color-scheme: light;
+
+  /* Page background sits a step below the card surface so cards read as raised
+     layers instead of dissolving into the page. Slightly tinted (never pure
+     white) to avoid large blown-out areas. */
+  --background: oklch(0.977 0.002 247);
+  --foreground: oklch(0.2 0.008 247);
+  --card: oklch(0.999 0.0005 247);
+  --card-foreground: oklch(0.2 0.008 247);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.2 0.008 247);
+  /* Indigo is the default accent, so a device that has never picked one still
+     renders a coloured UI instead of the old near-black primary. An explicit
+     [data-accent] rule further down overrides this. */
+  --primary: oklch(0.511 0.262 276.966);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
+  --secondary: oklch(0.96 0.003 247);
   --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
+  --muted: oklch(0.955 0.003 247);
+  --muted-foreground: oklch(0.5 0.01 247);
+  --accent: oklch(0.955 0.003 247);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.915 0.003 247);
+  --input: oklch(0.9 0.003 247);
+  --ring: oklch(0.585 0.233 277.117);
+  --primary-alt: oklch(0.62 0.22 303);
+  --chart-1: oklch(0.54 0.25 277);
+  --chart-2: oklch(0.62 0.2 277);
+  --chart-3: oklch(0.7 0.15 277);
+  --chart-4: oklch(0.78 0.1 277);
+  --chart-5: oklch(0.86 0.06 277);
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
+  --sidebar: oklch(0.986 0.0015 247);
   --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary: oklch(0.511 0.262 276.966);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent: oklch(0.955 0.003 247);
   --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-border: oklch(0.915 0.003 247);
   --sidebar-ring: oklch(0.708 0 0);
+
+  /* Semantic status colors */
+  --success: oklch(0.62 0.15 155);
+  --warning: oklch(0.7 0.15 70);
+  --danger: oklch(0.55 0.21 27);
+  --info: oklch(0.58 0.15 255);
+
+  /* Surfaces (subtle layered backgrounds) */
+  --surface: oklch(0.989 0.0015 247);
+  --surface-muted: oklch(0.958 0.003 247);
+
+  /* Companion hue that gives the accent its gradient. Overridden per accent. */
+  --primary-alt: oklch(0.62 0.22 303);
+
+  /* Card style system — overridden by [data-card-style] */
+  --card-bg: var(--card);
+  --card-ring-color: color-mix(in oklab, var(--foreground) 10%, transparent);
+  --card-shadow: 0 1px 2px 0 rgb(9 9 11 / 0.04), 0 1px 3px 0 rgb(9 9 11 / 0.03);
+  --card-spacing-var: 1rem;
 }
 
-.dark {
+.dark,
+.amoled {
+  color-scheme: dark;
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
+  --primary: oklch(0.673 0.217 276.325);
+  --primary-foreground: oklch(0.15 0.05 277);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -99,22 +143,542 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.15 0.04 27);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --ring: oklch(0.673 0.217 276.325);
+  --primary-alt: oklch(0.72 0.21 303);
+  --chart-1: oklch(0.7 0.19 277);
+  --chart-2: oklch(0.62 0.16 277);
+  --chart-3: oklch(0.52 0.15 277);
+  --chart-4: oklch(0.44 0.12 277);
+  --chart-5: oklch(0.38 0.1 277);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.673 0.217 276.325);
+  --sidebar-primary-foreground: oklch(0.15 0.05 277);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+
+  --success: oklch(0.696 0.17 162.48);
+  --warning: oklch(0.769 0.188 70.08);
+  --danger: oklch(0.704 0.191 22.216);
+  --info: oklch(0.707 0.165 254.624);
+
+  --surface: oklch(0.185 0.002 247);
+  --surface-muted: oklch(0.23 0.003 247);
+
+  --card-bg: var(--card);
+  --card-ring-color: oklch(1 0 0 / 12%);
+  --card-shadow: none;
+  --card-spacing-var: 1rem;
+}
+
+/* ----------------------------------------------------------------------------
+   AMOLED — a true-black mode, not a copy of Dark.
+   Page background is real black so unlit pixels stay off; cards sit one step up
+   in near-black charcoal so surfaces still read as layers. Borders and shadows
+   are kept deliberately dim (no glow) to avoid lighting up the panel.
+   ---------------------------------------------------------------------------- */
+.amoled {
+  --background: oklch(0 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.095 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.11 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.155 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.155 0 0);
+  --muted-foreground: oklch(0.74 0 0);
+  --accent: oklch(0.155 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.62 0 0);
+  --sidebar: oklch(0.05 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.673 0.217 276.325);
+  --sidebar-primary-foreground: oklch(0.15 0.05 277);
+  --sidebar-accent: oklch(0.145 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.62 0 0);
+  --primary-alt: oklch(0.75 0.2 303);
+  --surface: oklch(0.065 0 0);
+  --surface-muted: oklch(0.125 0 0);
+  --card-bg: var(--card);
+  --card-ring-color: oklch(1 0 0 / 9%);
+  --card-shadow: none;
+}
+
+/* ============================================================================
+   Accent color presets
+   Each preset re-maps the primary token so every component (buttons, links,
+   badges, progress, focus rings, charts, tabs, inputs, sidebar active state)
+   picks up the accent consistently.
+   ============================================================================ */
+
+:root[data-accent="indigo"] {
+  --primary: oklch(0.511 0.262 276.966);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.585 0.233 277.117);
+  --primary-alt: oklch(0.62 0.22 303);
+  --sidebar-primary: oklch(0.511 0.262 276.966);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --chart-1: oklch(0.54 0.25 277);
+  --chart-2: oklch(0.62 0.2 277);
+  --chart-3: oklch(0.7 0.15 277);
+  --chart-4: oklch(0.78 0.1 277);
+  --chart-5: oklch(0.86 0.06 277);
+}
+:is(.dark, .amoled)[data-accent="indigo"] {
+  --primary: oklch(0.673 0.217 276.325);
+  --primary-foreground: oklch(0.15 0.05 277);
+  --ring: oklch(0.673 0.217 276.325);
+  --primary-alt: oklch(0.72 0.21 303);
+  --sidebar-primary: oklch(0.673 0.217 276.325);
+  --sidebar-primary-foreground: oklch(0.15 0.05 277);
+  --chart-1: oklch(0.7 0.19 277);
+  --chart-2: oklch(0.62 0.16 277);
+  --chart-3: oklch(0.52 0.15 277);
+  --chart-4: oklch(0.44 0.12 277);
+  --chart-5: oklch(0.38 0.1 277);
+}
+
+:root[data-accent="violet"] {
+  --primary: oklch(0.541 0.281 293.009);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.606 0.25 292.717);
+  --primary-alt: oklch(0.66 0.26 330);
+  --sidebar-primary: oklch(0.541 0.281 293.009);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --chart-1: oklch(0.56 0.26 293);
+  --chart-2: oklch(0.64 0.2 293);
+  --chart-3: oklch(0.71 0.15 293);
+  --chart-4: oklch(0.79 0.1 293);
+  --chart-5: oklch(0.87 0.06 293);
+}
+:is(.dark, .amoled)[data-accent="violet"] {
+  --primary: oklch(0.702 0.183 293.541);
+  --primary-foreground: oklch(0.15 0.05 293);
+  --ring: oklch(0.702 0.183 293.541);
+  --primary-alt: oklch(0.74 0.22 330);
+  --sidebar-primary: oklch(0.702 0.183 293.541);
+  --sidebar-primary-foreground: oklch(0.15 0.05 293);
+  --chart-1: oklch(0.72 0.17 293);
+  --chart-2: oklch(0.63 0.15 293);
+  --chart-3: oklch(0.54 0.13 293);
+  --chart-4: oklch(0.46 0.11 293);
+  --chart-5: oklch(0.4 0.09 293);
+}
+
+:root[data-accent="blue"] {
+  --primary: oklch(0.546 0.245 262.881);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.606 0.208 262.881);
+  --primary-alt: oklch(0.65 0.2 240);
+  --sidebar-primary: oklch(0.546 0.245 262.881);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --chart-1: oklch(0.58 0.22 263);
+  --chart-2: oklch(0.66 0.17 263);
+  --chart-3: oklch(0.73 0.13 263);
+  --chart-4: oklch(0.8 0.09 263);
+  --chart-5: oklch(0.87 0.05 263);
+}
+:is(.dark, .amoled)[data-accent="blue"] {
+  --primary: oklch(0.707 0.165 254.624);
+  --primary-foreground: oklch(0.15 0.05 263);
+  --ring: oklch(0.707 0.165 254.624);
+  --primary-alt: oklch(0.74 0.17 240);
+  --sidebar-primary: oklch(0.707 0.165 254.624);
+  --sidebar-primary-foreground: oklch(0.15 0.05 263);
+  --chart-1: oklch(0.72 0.15 263);
+  --chart-2: oklch(0.64 0.13 263);
+  --chart-3: oklch(0.55 0.11 263);
+  --chart-4: oklch(0.47 0.1 263);
+  --chart-5: oklch(0.4 0.08 263);
+}
+
+:root[data-accent="cyan"] {
+  --primary: oklch(0.609 0.126 221.723);
+  --primary-foreground: oklch(0.12 0.04 221);
+  --ring: oklch(0.648 0.12 221.723);
+  --primary-alt: oklch(0.7 0.17 205);
+  --sidebar-primary: oklch(0.609 0.126 221.723);
+  --sidebar-primary-foreground: oklch(0.12 0.04 221);
+  --chart-1: oklch(0.6 0.13 222);
+  --chart-2: oklch(0.68 0.11 222);
+  --chart-3: oklch(0.75 0.08 222);
+  --chart-4: oklch(0.82 0.06 222);
+  --chart-5: oklch(0.89 0.03 222);
+}
+:is(.dark, .amoled)[data-accent="cyan"] {
+  --primary: oklch(0.789 0.154 211.53);
+  --primary-foreground: oklch(0.15 0.05 222);
+  --ring: oklch(0.789 0.154 211.53);
+  --primary-alt: oklch(0.8 0.15 205);
+  --sidebar-primary: oklch(0.789 0.154 211.53);
+  --sidebar-primary-foreground: oklch(0.15 0.05 222);
+  --chart-1: oklch(0.78 0.14 222);
+  --chart-2: oklch(0.68 0.12 222);
+  --chart-3: oklch(0.58 0.1 222);
+  --chart-4: oklch(0.5 0.09 222);
+  --chart-5: oklch(0.43 0.08 222);
+}
+
+:root[data-accent="emerald"] {
+  --primary: oklch(0.596 0.145 163.225);
+  --primary-foreground: oklch(0.12 0.04 163);
+  --ring: oklch(0.627 0.137 163.225);
+  --primary-alt: oklch(0.72 0.19 150);
+  --sidebar-primary: oklch(0.596 0.145 163.225);
+  --sidebar-primary-foreground: oklch(0.12 0.04 163);
+  --chart-1: oklch(0.6 0.14 163);
+  --chart-2: oklch(0.68 0.11 163);
+  --chart-3: oklch(0.75 0.09 163);
+  --chart-4: oklch(0.82 0.06 163);
+  --chart-5: oklch(0.89 0.04 163);
+}
+:is(.dark, .amoled)[data-accent="emerald"] {
+  --primary: oklch(0.765 0.177 163.223);
+  --primary-foreground: oklch(0.15 0.05 163);
+  --ring: oklch(0.765 0.177 163.223);
+  --primary-alt: oklch(0.8 0.17 150);
+  --sidebar-primary: oklch(0.765 0.177 163.223);
+  --sidebar-primary-foreground: oklch(0.15 0.05 163);
+  --chart-1: oklch(0.76 0.16 163);
+  --chart-2: oklch(0.67 0.13 163);
+  --chart-3: oklch(0.58 0.11 163);
+  --chart-4: oklch(0.5 0.1 163);
+  --chart-5: oklch(0.43 0.08 163);
+}
+
+:root[data-accent="teal"] {
+  --primary: oklch(0.6 0.118 184.704);
+  --primary-foreground: oklch(0.12 0.04 185);
+  --ring: oklch(0.635 0.108 184.704);
+  --primary-alt: oklch(0.75 0.15 190);
+  --sidebar-primary: oklch(0.6 0.118 184.704);
+  --sidebar-primary-foreground: oklch(0.12 0.04 185);
+  --chart-1: oklch(0.6 0.12 185);
+  --chart-2: oklch(0.68 0.1 185);
+  --chart-3: oklch(0.76 0.08 185);
+  --chart-4: oklch(0.83 0.05 185);
+  --chart-5: oklch(0.9 0.03 185);
+}
+:is(.dark, .amoled)[data-accent="teal"] {
+  --primary: oklch(0.777 0.152 181.912);
+  --primary-foreground: oklch(0.15 0.05 185);
+  --ring: oklch(0.777 0.152 181.912);
+  --primary-alt: oklch(0.83 0.13 190);
+  --sidebar-primary: oklch(0.777 0.152 181.912);
+  --sidebar-primary-foreground: oklch(0.15 0.05 185);
+  --chart-1: oklch(0.78 0.14 185);
+  --chart-2: oklch(0.69 0.11 185);
+  --chart-3: oklch(0.6 0.1 185);
+  --chart-4: oklch(0.52 0.09 185);
+  --chart-5: oklch(0.45 0.08 185);
+}
+
+:root[data-accent="rose"] {
+  --primary: oklch(0.645 0.246 16.439);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.6 0.21 16);
+  --primary-alt: oklch(0.72 0.2 30);
+  --sidebar-primary: oklch(0.645 0.246 16.439);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --chart-1: oklch(0.65 0.22 16);
+  --chart-2: oklch(0.72 0.17 16);
+  --chart-3: oklch(0.78 0.12 16);
+  --chart-4: oklch(0.85 0.08 16);
+  --chart-5: oklch(0.91 0.04 16);
+}
+:is(.dark, .amoled)[data-accent="rose"] {
+  --primary: oklch(0.765 0.177 27.33);
+  --primary-foreground: oklch(0.15 0.05 16);
+  --ring: oklch(0.765 0.177 27.33);
+  --primary-alt: oklch(0.8 0.17 30);
+  --sidebar-primary: oklch(0.765 0.177 27.33);
+  --sidebar-primary-foreground: oklch(0.15 0.05 16);
+  --chart-1: oklch(0.76 0.16 16);
+  --chart-2: oklch(0.67 0.14 16);
+  --chart-3: oklch(0.58 0.12 16);
+  --chart-4: oklch(0.5 0.1 16);
+  --chart-5: oklch(0.43 0.08 16);
+}
+
+:root[data-accent="orange"] {
+  --primary: oklch(0.646 0.222 41.116);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.646 0.222 41.116);
+  --primary-alt: oklch(0.78 0.17 60);
+  --sidebar-primary: oklch(0.646 0.222 41.116);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --chart-1: oklch(0.65 0.22 41);
+  --chart-2: oklch(0.72 0.17 41);
+  --chart-3: oklch(0.79 0.13 41);
+  --chart-4: oklch(0.85 0.09 41);
+  --chart-5: oklch(0.91 0.05 41);
+}
+:is(.dark, .amoled)[data-accent="orange"] {
+  --primary: oklch(0.75 0.183 55.934);
+  --primary-foreground: oklch(0.15 0.05 41);
+  --ring: oklch(0.75 0.183 55.934);
+  --primary-alt: oklch(0.86 0.15 60);
+  --sidebar-primary: oklch(0.75 0.183 55.934);
+  --sidebar-primary-foreground: oklch(0.15 0.05 41);
+  --chart-1: oklch(0.75 0.17 41);
+  --chart-2: oklch(0.66 0.15 41);
+  --chart-3: oklch(0.58 0.12 41);
+  --chart-4: oklch(0.5 0.1 41);
+  --chart-5: oklch(0.43 0.08 41);
+}
+
+:root[data-accent="amber"] {
+  --primary: oklch(0.666 0.179 58.318);
+  --primary-foreground: oklch(0.12 0.04 58);
+  --ring: oklch(0.666 0.179 58.318);
+  --primary-alt: oklch(0.8 0.16 35);
+  --sidebar-primary: oklch(0.666 0.179 58.318);
+  --sidebar-primary-foreground: oklch(0.12 0.04 58);
+  --chart-1: oklch(0.66 0.18 58);
+  --chart-2: oklch(0.73 0.14 58);
+  --chart-3: oklch(0.8 0.1 58);
+  --chart-4: oklch(0.86 0.07 58);
+  --chart-5: oklch(0.91 0.04 58);
+}
+:is(.dark, .amoled)[data-accent="amber"] {
+  --primary: oklch(0.769 0.188 70.08);
+  --primary-foreground: oklch(0.15 0.05 58);
+  --ring: oklch(0.769 0.188 70.08);
+  --primary-alt: oklch(0.86 0.14 35);
+  --sidebar-primary: oklch(0.769 0.188 70.08);
+  --sidebar-primary-foreground: oklch(0.15 0.05 58);
+  --chart-1: oklch(0.77 0.17 58);
+  --chart-2: oklch(0.68 0.14 58);
+  --chart-3: oklch(0.59 0.12 58);
+  --chart-4: oklch(0.51 0.1 58);
+  --chart-5: oklch(0.44 0.08 58);
+}
+
+:root[data-accent="lime"] {
+  --primary: oklch(0.62 0.19 130);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.66 0.18 130);
+  --primary-alt: oklch(0.78 0.2 130);
+  --sidebar-primary: oklch(0.62 0.19 130);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --chart-1: oklch(0.62 0.19 130);
+  --chart-2: oklch(0.7 0.15 130);
+  --chart-3: oklch(0.77 0.11 130);
+  --chart-4: oklch(0.84 0.07 130);
+  --chart-5: oklch(0.9 0.04 130);
+}
+:is(.dark, .amoled)[data-accent="lime"] {
+  --primary: oklch(0.83 0.2 130);
+  --primary-foreground: oklch(0.15 0.05 130);
+  --ring: oklch(0.83 0.2 130);
+  --primary-alt: oklch(0.9 0.18 130);
+  --sidebar-primary: oklch(0.83 0.2 130);
+  --sidebar-primary-foreground: oklch(0.15 0.05 130);
+  --chart-1: oklch(0.84 0.18 130);
+  --chart-2: oklch(0.74 0.15 130);
+  --chart-3: oklch(0.64 0.12 130);
+  --chart-4: oklch(0.55 0.1 130);
+  --chart-5: oklch(0.47 0.08 130);
+}
+
+:root[data-accent="fuchsia"] {
+  --primary: oklch(0.606 0.259 330);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.646 0.23 330);
+  --primary-alt: oklch(0.66 0.25 290);
+  --sidebar-primary: oklch(0.606 0.259 330);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --chart-1: oklch(0.6 0.25 330);
+  --chart-2: oklch(0.68 0.2 330);
+  --chart-3: oklch(0.75 0.15 330);
+  --chart-4: oklch(0.82 0.1 330);
+  --chart-5: oklch(0.89 0.05 330);
+}
+:is(.dark, .amoled)[data-accent="fuchsia"] {
+  --primary: oklch(0.75 0.22 330);
+  --primary-foreground: oklch(0.15 0.05 330);
+  --ring: oklch(0.75 0.22 330);
+  --primary-alt: oklch(0.74 0.22 290);
+  --sidebar-primary: oklch(0.75 0.22 330);
+  --sidebar-primary-foreground: oklch(0.15 0.05 330);
+  --chart-1: oklch(0.76 0.2 330);
+  --chart-2: oklch(0.67 0.17 330);
+  --chart-3: oklch(0.58 0.14 330);
+  --chart-4: oklch(0.5 0.11 330);
+  --chart-5: oklch(0.43 0.09 330);
+}
+
+:root[data-accent="sky"] {
+  --primary: oklch(0.585 0.18 240);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.62 0.16 240);
+  --primary-alt: oklch(0.72 0.16 220);
+  --sidebar-primary: oklch(0.585 0.18 240);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --chart-1: oklch(0.58 0.18 240);
+  --chart-2: oklch(0.66 0.14 240);
+  --chart-3: oklch(0.74 0.1 240);
+  --chart-4: oklch(0.82 0.07 240);
+  --chart-5: oklch(0.9 0.04 240);
+}
+:is(.dark, .amoled)[data-accent="sky"] {
+  --primary: oklch(0.79 0.15 230);
+  --primary-foreground: oklch(0.15 0.05 230);
+  --ring: oklch(0.79 0.15 230);
+  --primary-alt: oklch(0.84 0.13 215);
+  --sidebar-primary: oklch(0.79 0.15 230);
+  --sidebar-primary-foreground: oklch(0.15 0.05 230);
+  --chart-1: oklch(0.8 0.14 230);
+  --chart-2: oklch(0.7 0.12 230);
+  --chart-3: oklch(0.6 0.1 230);
+  --chart-4: oklch(0.52 0.09 230);
+  --chart-5: oklch(0.44 0.08 230);
+}
+
+/* ============================================================================
+   Background presets
+   Applied together with the base light/dark theme via [data-background].
+   ============================================================================ */
+
+/* Light presets (guarded to light mode so they never leak into .dark) */
+:root:not(.dark, .amoled)[data-background="soft"] {
+  --background: oklch(0.985 0.0025 24);
+  --surface: oklch(0.978 0.003 24);
+  --surface-muted: oklch(0.956 0.004 24);
+}
+:root:not(.dark, .amoled)[data-background="tinted"] {
+  --background: oklch(0.987 0.009 277);
+  --surface: oklch(0.978 0.011 277);
+  --surface-muted: oklch(0.955 0.012 277);
+}
+:root:not(.dark, .amoled)[data-background="contrast"] {
+  --background: oklch(0.955 0.003 24);
+  --muted: oklch(0.93 0.004 24);
+  --border: oklch(0.88 0.004 24);
+  --surface: oklch(0.945 0.004 24);
+  --surface-muted: oklch(0.925 0.005 24);
+}
+
+/* Creamy — a genuinely warm light mode.
+   The existing warm presets ("soft", "contrast") sit at hue 24 with chroma
+   around 0.003, which is below the threshold where OKLCH reads as tinted at
+   all: they render as plain grey. Creamy moves to hue ~75 at a chroma the eye
+   can actually see, and warms the card and border tokens to match so the
+   surfaces layer as cream rather than grey-on-cream. */
+:root:not(.dark, .amoled)[data-background="creamy"] {
+  --background: oklch(0.978 0.012 75);
+  --surface: oklch(0.968 0.014 75);
+  --surface-muted: oklch(0.945 0.016 75);
+
+  --card: oklch(0.993 0.008 78);
+  --popover: oklch(0.996 0.007 78);
+
+  --secondary: oklch(0.955 0.018 75);
+  --muted: oklch(0.952 0.017 75);
+  --accent: oklch(0.945 0.022 72);
+  --accent-foreground: oklch(0.26 0.03 60);
+
+  --border: oklch(0.9 0.018 72);
+  --input: oklch(0.885 0.02 72);
+
+  --sidebar: oklch(0.972 0.013 75);
+  --sidebar-accent: oklch(0.945 0.022 72);
+  --sidebar-border: oklch(0.9 0.018 72);
+}
+
+/* Creamy in dark mode — warm charcoal rather than blue-black, so the preset
+   keeps its character when the OS asks for dark. */
+:is(.dark, .amoled)[data-background="creamy"] {
+  --background: oklch(0.168 0.012 70);
+  --surface: oklch(0.205 0.014 70);
+  --surface-muted: oklch(0.245 0.016 70);
+
+  --card: oklch(0.215 0.015 70);
+  --popover: oklch(0.222 0.016 70);
+
+  --secondary: oklch(0.265 0.018 70);
+  --muted: oklch(0.265 0.018 70);
+  --accent: oklch(0.28 0.02 68);
+
+  --border: oklch(1 0 0 / 11%);
+  --sidebar: oklch(0.19 0.013 70);
+}
+
+/* Dark presets */
+:is(.dark, .amoled)[data-background="deep"] {
+  --background: oklch(0.12 0.006 250);
+  --card: oklch(0.17 0.01 250);
+  --popover: oklch(0.17 0.01 250);
+  --secondary: oklch(0.22 0.012 250);
+  --muted: oklch(0.22 0.012 250);
+  --accent: oklch(0.22 0.012 250);
+  --border: oklch(1 0 0 / 8%);
+  --surface: oklch(0.15 0.008 250);
+  --surface-muted: oklch(0.19 0.01 250);
+}
+:is(.dark, .amoled)[data-background="slate"] {
+  --background: oklch(0.17 0.012 250);
+  --card: oklch(0.21 0.014 250);
+  --popover: oklch(0.21 0.014 250);
+  --secondary: oklch(0.26 0.016 250);
+  --muted: oklch(0.26 0.016 250);
+  --accent: oklch(0.26 0.016 250);
+  --border: oklch(1 0 0 / 12%);
+  --surface: oklch(0.2 0.012 250);
+  --surface-muted: oklch(0.245 0.014 250);
+}
+:is(.dark, .amoled)[data-background="charcoal"] {
+  --background: oklch(0.16 0.006 60);
+  --card: oklch(0.2 0.008 60);
+  --popover: oklch(0.2 0.008 60);
+  --secondary: oklch(0.25 0.009 60);
+  --muted: oklch(0.25 0.009 60);
+  --accent: oklch(0.25 0.009 60);
+  --surface: oklch(0.19 0.007 60);
+  --surface-muted: oklch(0.235 0.008 60);
+}
+
+/* AMOLED keeps the page on true black regardless of preset — only the raised
+   surfaces shift tone, so the preset still changes how cards read. */
+.amoled[data-background="deep"],
+.amoled[data-background="slate"],
+.amoled[data-background="charcoal"] {
+  --background: oklch(0 0 0);
+}
+.amoled[data-background="slate"] {
+  --card: oklch(0.098 0.006 250);
+  --popover: oklch(0.112 0.006 250);
+  --surface: oklch(0.068 0.005 250);
+  --surface-muted: oklch(0.128 0.006 250);
+}
+.amoled[data-background="charcoal"] {
+  --card: oklch(0.1 0.004 60);
+  --popover: oklch(0.114 0.004 60);
+  --surface: oklch(0.07 0.003 60);
+  --surface-muted: oklch(0.13 0.004 60);
+}
+
+/* ============================================================================
+   Density presets
+   Declared before the card-style block on purpose. Both selectors have the same
+   specificity, so source order decides the winner: card style owns padding when
+   it says something about it, and density fills in the rest. The reverse order
+   made "Compact density" silently do nothing whenever the card style was also
+   touching spacing.
+   ============================================================================ */
+
+[data-density="compact"] {
+  --card-spacing-var: 0.75rem;
 }
 
 @layer base {
@@ -126,5 +690,855 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+/* ============================================================================
+   Enhanced Card Visual System
+   ============================================================================ */
+
+/* Base card appearance driven by data attributes */
+[data-card-style="elevated"] {
+  --card-bg: var(--card);
+  --card-ring-color: color-mix(in oklab, var(--foreground) 12%, transparent);
+  --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.04);
+}
+[data-card-style="soft"] {
+  --card-bg: color-mix(in oklab, var(--primary) 6%, var(--background));
+  --card-ring-color: transparent;
+  --card-shadow: none;
+}
+[data-card-style="outline"] {
+  --card-bg: transparent;
+  --card-ring-color: var(--border);
+  --card-shadow: none;
+}
+[data-card-style="glass"] {
+  --card-bg: color-mix(in oklab, var(--card) 68%, transparent);
+  --card-ring-color: color-mix(in oklab, var(--foreground) 12%, transparent);
+  --card-shadow: none;
+}
+[data-card-style="default"] {
+  --card-bg: var(--card);
+  --card-ring-color: color-mix(in oklab, var(--foreground) 8%, transparent);
+  --card-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+}
+[data-card-style="compact"] {
+  --card-bg: var(--card);
+  --card-ring-color: color-mix(in oklab, var(--foreground) 8%, transparent);
+  --card-shadow: none;
+  --card-spacing-var: 0.625rem;
+}
+/* Gradient reads as a hairline of the accent pair rather than a flat border.
+   The ring is dropped so the gradient can be the only edge treatment. */
+[data-card-style="gradient"] {
+  --card-bg: var(--card);
+  --card-ring-color: transparent;
+  --card-shadow: 0 12px 32px -20px var(--primary-glow);
+}
+/* A `ring` cannot be a gradient, so this style swaps the ring for a real
+   transparent border and paints the accent pair underneath it via a clipped
+   double background. Footprint is unchanged: both are 1px. */
+[data-card-style="gradient"] [data-slot="card"] {
+  border: 1px solid transparent;
+  background-image:
+    linear-gradient(var(--card-bg), var(--card-bg)),
+    var(--brand-gradient);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+}
+
+/* Apply card styles to the shadcn Card component */
+.card-style-default {
+  background: var(--card-bg);
+  border: 1px solid var(--card-ring-color);
+  box-shadow: var(--card-shadow);
+}
+.card-style-elevated {
+  background: var(--card-bg);
+  border: 1px solid var(--card-ring-color);
+  box-shadow: var(--card-shadow);
+}
+.card-style-soft {
+  background: var(--card-bg);
+  border: 1px solid transparent;
+  box-shadow: none;
+}
+.card-style-outline {
+  background: var(--card-bg);
+  border: 1px solid var(--card-ring-color);
+  box-shadow: none;
+}
+.card-style-glass {
+  background: var(--card-bg);
+  border: 1px solid var(--card-ring-color);
+  box-shadow: none;
+  backdrop-filter: blur(12px);
+}
+.card-style-compact {
+  background: var(--card-bg);
+  border: 1px solid var(--card-ring-color);
+  box-shadow: none;
+  padding: var(--card-spacing-var);
+}
+
+/* Card hover elevation transition */
+.card-hover {
+  transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+}
+.card-hover:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px 0 rgb(0 0 0 / 0.08);
+}
+
+/* Stat card variant */
+.stat-card {
+  position: relative;
+  overflow: hidden;
+}
+.stat-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--primary);
+  opacity: 0.6;
+}
+
+/* Project card banner variant */
+.project-card-banner {
+  position: relative;
+  overflow: hidden;
+}
+.project-card-banner::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--card-color, var(--primary));
+  opacity: 0.8;
+}
+
+/* Activity timeline variant */
+.timeline-item {
+  position: relative;
+  padding-left: 1.5rem;
+}
+.timeline-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.5rem;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+.timeline-item:last-child::before {
+  bottom: 50%;
+}
+.timeline-dot {
+  position: absolute;
+  left: -4px;
+  top: 0.35rem;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+  border: 2px solid var(--background);
+}
+
+/* ============================================================================
+   Dashboard surface layer
+   Every value below is derived from a theme token (never a literal accent), so
+   the dashboard follows the selected accent and re-reads correctly in light,
+   dark and AMOLED without any per-mode overrides.
+   Hierarchy: page background -> .dash-surface -> card -> .dash-card-hover
+   ============================================================================ */
+
+/* Section-level surface: the middle layer between page background and cards. */
+.dash-surface {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+}
+
+/* Interactive card: elevation, border highlight and background transition. */
+.dash-card-hover {
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .dash-card-hover:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklab, var(--primary) 34%, var(--border));
+    box-shadow:
+      0 12px 24px -14px color-mix(in oklab, var(--foreground) 34%, transparent),
+      0 2px 6px -3px rgb(0 0 0 / 0.08);
+  }
+}
+.dash-card-hover:active {
+  transform: translateY(0);
+}
+
+/* Slim accent edge for the highest-priority cards. Used sparingly. */
+.dash-accent-edge {
+  position: relative;
+  overflow: hidden;
+}
+.dash-accent-edge::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 3px;
+  background: var(--primary);
+  opacity: 0.75;
+}
+
+/* Featured card: a restrained accent wash along the top edge. */
+.dash-accent-wash::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 88px;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--primary) 10%, transparent),
+    transparent
+  );
+  pointer-events: none;
+}
+
+/* Large tabular KPI numeral. */
+.dash-kpi-value {
+  font-size: 1.75rem;
+  line-height: 1.1;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Progress bar fill grows from 0 so the real value is legible when it lands. */
+@keyframes dash-grow {
+  from {
+    width: 0;
+  }
+}
+.dash-progress-fill {
+  animation: dash-grow 520ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ============================================================================
+   Colour effects
+   Everything below is derived from --primary and --primary-alt, so switching
+   accent repaints the whole UI — gradients, glows, washes, icon tiles — without
+   a single per-mode override.
+   ============================================================================ */
+
+:root {
+  --primary-soft: color-mix(in oklab, var(--primary) 12%, transparent);
+  --primary-softer: color-mix(in oklab, var(--primary) 6%, transparent);
+  --primary-glow: color-mix(in oklab, var(--primary) 34%, transparent);
+  --brand-gradient: linear-gradient(
+    120deg,
+    var(--primary) 0%,
+    var(--primary-alt) 100%
+  );
+  --brand-gradient-soft: linear-gradient(
+    120deg,
+    color-mix(in oklab, var(--primary) 22%, transparent) 0%,
+    color-mix(in oklab, var(--primary-alt) 18%, transparent) 100%
+  );
+}
+
+/* --- Ambient accent wash ---------------------------------------------------
+   Painted with radial gradients rather than blurred divs: no filter layer, no
+   extra compositing, and it costs nothing on a mid-range phone. */
+
+@keyframes aurora-drift {
+  from {
+    transform: translate3d(-4%, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(4%, 2%, 0) scale(1.12);
+  }
+}
+
+.app-aurora::before {
+  content: "";
+  position: absolute;
+  inset: -20% -10% 0;
+  height: 120%;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      38rem 20rem at 15% 0%,
+      color-mix(in oklab, var(--primary) 26%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      30rem 18rem at 82% 4%,
+      color-mix(in oklab, var(--primary-alt) 24%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      26rem 16rem at 52% 0%,
+      color-mix(in oklab, var(--chart-3) 18%, transparent),
+      transparent 70%
+    );
+  animation: aurora-drift 24s ease-in-out infinite alternate;
+}
+
+/* AMOLED keeps the page at true black, so the wash has to be far fainter or it
+   reads as a grey haze on a panel that is meant to stay off. */
+.amoled .app-aurora::before {
+  opacity: 0.5;
+}
+
+/* --- Gradient primitives --------------------------------------------------- */
+
+.brand-gradient {
+  background-image: var(--brand-gradient);
+}
+
+.brand-text {
+  background-image: var(--brand-gradient);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  /* Without this, descenders get clipped by the line box in WebKit. */
+  padding-bottom: 0.08em;
+}
+
+/* --- Hero ------------------------------------------------------------------
+   The one large surface that is allowed to be loud. */
+.dash-hero {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.dash-hero::before {
+  content: "";
+  position: absolute;
+  inset: -40% -20% auto -20%;
+  height: 150%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      30rem 16rem at 20% 10%,
+      color-mix(in oklab, var(--primary) 30%, transparent),
+      transparent 68%
+    ),
+    radial-gradient(
+      26rem 14rem at 85% 0%,
+      color-mix(in oklab, var(--primary-alt) 26%, transparent),
+      transparent 70%
+    );
+}
+
+/* --- Icon tiles ------------------------------------------------------------
+   A gradient chip behind a line icon. Replaces the flat `bg-muted` square that
+   made every card look identical. */
+.icon-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: calc(var(--radius) * 0.9);
+  background-image: var(--brand-gradient);
+  color: #fff;
+  box-shadow: 0 6px 16px -8px var(--primary-glow);
+}
+.icon-tile-muted {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: calc(var(--radius) * 0.9);
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+/* --- Glow ------------------------------------------------------------------- */
+.glow-primary {
+  box-shadow: 0 8px 28px -12px var(--primary-glow);
+}
+.glow-ring {
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--primary) 35%, transparent),
+    0 10px 30px -16px var(--primary-glow);
+}
+
+/* --- Frosted chrome ---------------------------------------------------------
+   Topbar and bottom nav share this so the two edges of the app read as one
+   surface when they scroll over content. */
+.chrome-blur {
+  background-color: color-mix(in oklab, var(--background) 72%, transparent);
+  backdrop-filter: blur(16px) saturate(1.6);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .chrome-blur {
+    background-color: var(--background);
+  }
+}
+
+/* Hairline of accent under the topbar, so the header is anchored to the theme. */
+.chrome-hairline {
+  position: relative;
+}
+.chrome-hairline::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: -1px;
+  height: 1px;
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--primary) 55%, transparent) 35%,
+    color-mix(in oklab, var(--primary-alt) 55%, transparent) 65%,
+    transparent
+  );
+}
+
+/* --- Bottom navigation active pill ------------------------------------------ */
+.nav-pill-active {
+  background-image: var(--brand-gradient-soft);
+  color: var(--primary);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 30%, transparent);
+}
+
+/* --- Safe areas -------------------------------------------------------------
+   `viewportFit: "cover"` lets the app run under the notch and the home
+   indicator, so every fixed edge has to add its own inset back. */
+.safe-t {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.safe-b {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.safe-x {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* --- Shimmer (loading placeholders that read as part of the theme) ---------- */
+@keyframes shimmer-slide {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+.shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--muted) 0%,
+    color-mix(in oklab, var(--primary) 14%, var(--muted)) 50%,
+    var(--muted) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-slide 1.8s linear infinite;
+}
+
+/* Button hover effects */
+.btn-glow:hover {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 20%, transparent);
+}
+
+/* Focus visible enhancements */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Subtle animations */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fade-in 200ms ease-out;
+}
+.animate-slide-up {
+  animation: slide-up 250ms ease-out;
+}
+
+/* Skeleton loading animation */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.skeleton {
+  background: var(--muted);
+  border-radius: var(--radius-sm);
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+/* Progress bar enhancement */
+.progress-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--muted);
+  overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--primary);
+  transition: width 400ms ease;
+}
+
+/* Badge enhancement */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.badge-primary {
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+.badge-success {
+  background: color-mix(in oklab, var(--success) 12%, transparent);
+  color: var(--success);
+}
+.badge-warning {
+  background: color-mix(in oklab, var(--warning) 12%, transparent);
+  color: var(--warning);
+}
+.badge-danger {
+  background: color-mix(in oklab, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+.badge-info {
+  background: color-mix(in oklab, var(--info) 12%, transparent);
+  color: var(--info);
+}
+
+/* Table row hover */
+.table-row:hover {
+  background: color-mix(in oklab, var(--primary) 3%, transparent);
+}
+
+/* Sidebar enhanced active indicator */
+.sidebar-active {
+  background: color-mix(in oklab, var(--primary) 10%, transparent);
+  color: var(--primary);
+}
+.sidebar-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  border-radius: 0 3px 3px 0;
+  background: var(--primary);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}
+
+/* Input enhanced focus */
+input:focus, textarea:focus, select:focus {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--ring) 20%, transparent);
+}
+
+/* Dialog enhanced */
+.dialog-overlay {
+  background: oklch(0 0 0 / 0.5);
+  backdrop-filter: blur(4px);
+}
+
+/* Empty state enhancement */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1.5rem;
+  text-align: center;
+}
+
+/* Responsive spacing adjustments */
+@media (max-width: 640px) {
+  .mobile-gap { gap: 0.75rem; }
+}
+
+/* ============================================================================
+   Layout Styles
+   ============================================================================ */
+
+/* App Shell */
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.app-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.app-main {
+  flex: 1;
+  padding: var(--card-spacing-var);
+  overflow-y: auto;
+}
+
+/* Sidebar layout enhancements */
+.sidebar-group-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.sidebar-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+  transition: all 150ms ease;
+}
+
+.sidebar-nav-item:hover {
+  background: color-mix(in oklab, var(--primary) 8%, transparent);
+  color: var(--foreground);
+}
+
+.sidebar-nav-item.active {
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.sidebar-nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  border-radius: 0 3px 3px 0;
+  background: var(--primary);
+}
+
+/* Topbar enhancements */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklab, var(--background) 95%, transparent);
+  backdrop-filter: blur(8px);
+  padding: 0.5rem 1rem;
+}
+
+/* Page grid layout */
+.page-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.page-grid-2col {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+
+.page-grid-3col {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+.page-grid-4col {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+
+/* Stat grid */
+.stat-grid-4 {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+.stat-grid-2 {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+/* Section with header */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Loading container */
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Empty state container */
+.empty-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1.5rem;
+  text-align: center;
+}
+
+/* Error state container */
+.error-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1.5rem;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+}
+
+/* Responsive breakpoints */
+@media (min-width: 640px) {
+  .sm\:grid-2 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 768px) {
+  .md\:grid-2 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .md\:grid-3 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .lg\:grid-3 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .lg\:grid-4 {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* Mobile bottom nav */
+.mobile-bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  border-top: 1px solid var(--border);
+  background: color-mix(in oklab, var(--background) 95%, transparent);
+  backdrop-filter: blur(8px);
+  padding: 0.25rem 0;
+  height: 3.5rem;
+}
+
+.mobile-bottom-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.125rem;
+  font-size: 0.625rem;
+  color: var(--muted-foreground);
+  transition: color 150ms ease;
+}
+
+.mobile-bottom-nav-item.active {
+  color: var(--primary);
+}
+
+/* Dialog/Sheet animations */
+.dialog-enter {
+  animation: slide-up 200ms ease-out;
+}
+
+/* Focus ring for all interactive elements */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Respect the OS-level reduced motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  html,
+  html * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .card-hover:hover,
+  .dash-card-hover:hover,
+  .dash-card-hover:active {
+    transform: none !important;
   }
 }

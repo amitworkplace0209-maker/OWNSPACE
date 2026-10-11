@@ -4,6 +4,13 @@ import { cache } from "react";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/dal";
+import { getAnalyticsSnapshot } from "@/lib/dal/analytics";
+import {
+  computeProjectHealth,
+  daysUntil,
+  todayIsoDate,
+  type HealthState,
+} from "@/lib/dashboard-logic";
 import type { Project, ProjectStatus, Tag } from "@/types";
 
 export type ProjectWithTags = Project & { tag_names: string[]; tag_ids: string[] };
@@ -148,6 +155,8 @@ export type DashboardProjectSummary = {
   active: number;
   completed: number;
   archived: number;
+  /** Projects created during the current calendar month — a real trend, not a guess. */
+  createdThisMonth: number;
 };
 
 export const getProjectSummary = cache(
@@ -155,27 +164,157 @@ export const getProjectSummary = cache(
     const user = await requireUser();
     const supabase = await createClient();
 
-    const { data, error } = await supabase
+    // Status totals already come from getAnalyticsSnapshot(), which the
+    // dashboard renders alongside this — re-scanning the projects table here
+    // would duplicate that work. Only the month-to-date creation count is not
+    // in the snapshot, so that is the single query this performs.
+    const snapshot = await getAnalyticsSnapshot();
+    const now = new Date();
+    const monthStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
+    ).toISOString();
+
+    const { count } = await supabase
       .from("projects")
-      .select("status")
-      .eq("user_id", user.id);
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .gte("created_at", monthStart);
 
-    const summary: DashboardProjectSummary = {
-      total: 0,
-      active: 0,
-      completed: 0,
-      archived: 0,
+    return {
+      total: snapshot.projects.total,
+      active: snapshot.projects.active + snapshot.projects.onHold,
+      completed: snapshot.projects.completed,
+      archived: snapshot.projects.archived,
+      createdThisMonth: count ?? 0,
     };
+  }
+);
 
-    if (error || !data) return summary;
+// ---------------------------------------------------------------------------
+// Dashboard: project health
+// ---------------------------------------------------------------------------
 
-    summary.total = data.length;
-    for (const p of data) {
-      if (p.status === "active" || p.status === "on_hold") summary.active += 1;
-      else if (p.status === "completed") summary.completed += 1;
-      else if (p.status === "archived") summary.archived += 1;
+export type ProjectHealthSummary = Project & {
+  health: HealthState;
+  /** Open tasks whose due date is before today. */
+  overdueTasks: number;
+  /** backlog + todo + in_progress tasks. */
+  openTasks: number;
+  /** Tasks with status "done". */
+  completedTasks: number;
+  /** Calendar days until the project due date, or null when unset. */
+  daysLeft: number | null;
+  /** Name of the phase currently in progress, if any. */
+  currentPhase: string | null;
+};
+
+const HEALTH_RANK: Record<HealthState, number> = {
+  at_risk: 0,
+  attention: 1,
+  healthy: 2,
+};
+
+/**
+ * Active projects (status "active" or "on_hold" — the same set the KPI counts)
+ * enriched with a health state derived purely from their own data.
+ *
+ * Three queries total, no per-project fetches:
+ *   1. the projects themselves
+ *   2. every task for those project ids (project_id/status/due_date only)
+ *   3. all phases (shared, cached)
+ *
+ * Ordering puts whatever needs attention first, then most recently touched.
+ * Health rules live in `computeProjectHealth` and are documented there.
+ */
+export const getProjectHealthSummaries = cache(
+  async (limit = 4): Promise<ProjectHealthSummary[]> => {
+    const user = await requireUser();
+    const supabase = await createClient();
+
+    const [projectsRes, phasesRes] = await Promise.all([
+      supabase
+        .from("projects")
+        .select(
+          "id, user_id, name, description, icon, color, status, priority, progress, start_date, due_date, sort_order, created_at, updated_at"
+        )
+        .eq("user_id", user.id)
+        .in("status", ["active", "on_hold"])
+        .order("updated_at", { ascending: false })
+        .limit(limit),
+      // Queried directly (rather than via getAllPhases) so this module does
+      // not import phases-milestones, which already imports this module.
+      supabase
+        .from("project_phases")
+        .select("project_id, name, status, sort_order")
+        .eq("user_id", user.id)
+        .order("sort_order", { ascending: true }),
+    ]);
+
+    const projects = (projectsRes.data ?? []) as Project[];
+    if (projects.length === 0) return [];
+
+    const ids = projects.map((p) => p.id);
+    const tasksRes = await supabase
+      .from("tasks")
+      .select("project_id, status, due_date")
+      .eq("user_id", user.id)
+      .in("project_id", ids);
+
+    const rollup = new Map<
+      string,
+      { open: number; overdue: number; done: number }
+    >();
+    const todayStr = todayIsoDate();
+    for (const t of tasksRes.data ?? []) {
+      const entry =
+        rollup.get(t.project_id) ?? { open: 0, overdue: 0, done: 0 };
+      if (t.status === "done") {
+        entry.done += 1;
+      } else if (t.status !== "cancelled") {
+        entry.open += 1;
+        if (t.due_date && t.due_date < todayStr) entry.overdue += 1;
+      }
+      rollup.set(t.project_id, entry);
     }
 
-    return summary;
+    const phasesByProject = new Map<
+      string,
+      Array<{ name: string; status: string; sort_order: number }>
+    >();
+    for (const phase of phasesRes.data ?? []) {
+      const list = phasesByProject.get(phase.project_id) ?? [];
+      list.push(phase);
+      phasesByProject.set(phase.project_id, list);
+    }
+
+    const summaries = projects.map((project): ProjectHealthSummary => {
+      const stats = rollup.get(project.id) ?? { open: 0, overdue: 0, done: 0 };
+      const daysLeft = daysUntil(project.due_date);
+      const projectPhases = phasesByProject.get(project.id) ?? [];
+      const currentPhase =
+        projectPhases.find((p) => p.status === "in_progress")?.name ??
+        projectPhases.find((p) => p.status !== "completed")?.name ??
+        null;
+
+      return {
+        ...project,
+        health: computeProjectHealth({
+          overdueTasks: stats.overdue,
+          daysLeft,
+          progress: project.progress ?? 0,
+        }),
+        overdueTasks: stats.overdue,
+        openTasks: stats.open,
+        completedTasks: stats.done,
+        daysLeft,
+        currentPhase,
+      };
+    });
+
+    return summaries.sort(
+      (a, b) =>
+        HEALTH_RANK[a.health] - HEALTH_RANK[b.health] ||
+        new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+    );
   }
 );

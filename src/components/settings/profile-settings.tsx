@@ -1,27 +1,17 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { Camera, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { FormField } from "@/components/shared/form-field";
 import { updateProfileAction, updateAvatarAction } from "@/lib/actions/profile";
+import { initials } from "@/lib/utils";
 
-type FormState = { error?: string };
-
-function initials(displayName: string | null | undefined, email: string): string {
-  const name = displayName?.trim();
-  if (name) {
-    return name
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((p) => p[0]?.toUpperCase() ?? "")
-      .join("");
-  }
-  return (email[0] ?? "U").toUpperCase();
-}
+type FormState = { error?: string; data?: { id: string } };
 
 export function ProfileSettings({
   displayName,
@@ -38,12 +28,23 @@ export function ProfileSettings({
   const [state, formAction, pending] = useActionState<FormState, FormData>(updateProfileAction, {});
   const [avatarState, avatarAction, avatarPending] = useActionState<FormState, FormData>(updateAvatarAction, {});
   const [dirty, setDirty] = useState(false);
+  const avatarStateRef = useRef(avatarState);
 
   useEffect(() => {
-    if (avatarState.error === undefined) {
-      router.refresh();
+    if (avatarStateRef.current !== avatarState) {
+      avatarStateRef.current = avatarState;
+      if (!avatarState.error && avatarState.data) {
+        toast.success("Avatar updated.");
+        router.refresh();
+      }
     }
   }, [avatarState, router]);
+
+  useEffect(() => {
+    if (state.data) {
+      toast.success("Profile saved.");
+    }
+  }, [state.data]);
 
   return (
     <div className="flex flex-col gap-4">

@@ -80,6 +80,13 @@ function DropdownMenuItem({
 }: MenuPrimitive.Item.Props & {
   inset?: boolean
   variant?: "default" | "destructive"
+  /**
+   * Base UI's menu items fire `onClick`, not `onSelect`. `onSelect` still
+   * type-checks because React keeps a legacy DOM selection event on every
+   * element, so it looks valid but never fires — which silently made the theme
+   * picker a no-op. Declaring it `never` turns that mistake into a build error.
+   */
+  onSelect?: never
 }) {
   return (
     <MenuPrimitive.Item

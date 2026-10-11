@@ -1,5 +1,5 @@
 import { getProject } from "@/lib/dal/projects";
-import { getTasks } from "@/lib/dal/tasks";
+import { getSubtaskProgress, getTaskStats, getTasks } from "@/lib/dal/tasks";
 import { getPhases } from "@/lib/dal/phases-milestones";
 import { TASK_STATUSES } from "@/types";
 import { PageHeader } from "@/components/shared/page-header";
@@ -20,10 +20,16 @@ export default async function ProjectTasksPage({
   const sp = await searchParams;
 
   const project = await getProject(id);
-  const [tasks, phases] = await Promise.all([
+  const [tasks, stats, phases] = await Promise.all([
     getTasks({ projectId: id, sort: "due" }),
+    getTaskStats({ projectId: id }),
     getPhases(id),
   ]);
+
+  const parentIds = tasks
+    .filter((task) => tasks.some((other) => other.parent_task_id === task.id))
+    .map((task) => task.id);
+  const subtaskProgress = await getSubtaskProgress(parentIds);
 
   const status = TASK_STATUSES.includes(sp.status as (typeof TASK_STATUSES)[number])
     ? (sp.status as string)
@@ -37,8 +43,10 @@ export default async function ProjectTasksPage({
       <PageHeader title="Tasks" description={`All tasks in ${project.name}.`} />
       <TasksWorkspace
         tasks={tasks}
+        stats={stats}
         projects={[project]}
         phases={phases}
+        subtaskProgress={subtaskProgress}
         initialStatus={status}
         initialDue={due}
         initialProjectId={project.id}

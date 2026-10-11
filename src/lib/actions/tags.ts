@@ -56,7 +56,7 @@ export async function updateTagAction(
   if (error) return { error: friendlyError(error, "Could not update the tag.") };
 
   revalidatePath("/tags");
-  return {};
+  return { data: { id: tagId } };
 }
 
 export async function deleteTagAction(tagId: string): Promise<{ error?: string }> {

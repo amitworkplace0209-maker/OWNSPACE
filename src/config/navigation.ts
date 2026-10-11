@@ -3,18 +3,24 @@ import {
   FolderKanban,
   CheckSquare,
   CalendarDays,
+  AlarmClock,
+  BellRing,
   NotebookPen,
+  SunIcon,
   HardDrive,
+  Database,
+  Wallet,
+  FolderOpen,
   GitCommitHorizontal,
-  Bell,
   BookOpen,
+  Tag,
+  FlaskConical,
   BarChart3,
   Activity,
+  Search,
   Archive,
   Settings,
   TimerIcon,
-  SunIcon,
-  Tag,
   type LucideIcon,
 } from "lucide-react";
 
@@ -31,27 +37,38 @@ export type NavGroup = {
 
 export const sidebarNav: NavGroup[] = [
   {
-    label: "Workspace",
+    label: "Main",
     items: [
       { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
       { title: "Projects", href: "/projects", icon: FolderKanban },
       { title: "Tasks", href: "/tasks", icon: CheckSquare },
       { title: "Calendar", href: "/calendar", icon: CalendarDays },
-      { title: "Daily", href: "/daily", icon: SunIcon },
-      { title: "Notes", href: "/notes", icon: NotebookPen },
-      { title: "Files", href: "/files", icon: HardDrive },
-      { title: "Timeline", href: "/timeline", icon: GitCommitHorizontal },
-      { title: "Reminders", href: "/reminders", icon: Bell },
-      { title: "Time", href: "/time", icon: TimerIcon },
-      { title: "Wiki", href: "/wiki", icon: BookOpen },
-      { title: "Tags", href: "/tags", icon: Tag },
+      { title: "Reminders", href: "/reminders", icon: AlarmClock },
+      { title: "Notifications", href: "/notifications", icon: BellRing },
     ],
   },
   {
-    label: "Insights",
+    label: "Workspace",
     items: [
+      { title: "Notes", href: "/notes", icon: NotebookPen },
+      { title: "Daily Notes", href: "/daily", icon: SunIcon },
+      { title: "G Drive", href: "/gdrive", icon: HardDrive },
+      { title: "Storage", href: "/storage", icon: Database },
+      { title: "Finance", href: "/finance", icon: Wallet },
+      { title: "Files", href: "/files", icon: FolderOpen },
+      { title: "Wiki", href: "/wiki", icon: BookOpen },
+      { title: "Tags", href: "/tags", icon: Tag },
+      { title: "Timeline", href: "/timeline", icon: GitCommitHorizontal },
+    ],
+  },
+  {
+    label: "Tools",
+    items: [
+      { title: "Lab", href: "/lab", icon: FlaskConical },
+      { title: "Time", href: "/time", icon: TimerIcon },
       { title: "Analytics", href: "/analytics", icon: BarChart3 },
       { title: "Activity", href: "/activity", icon: Activity },
+      { title: "Search", href: "/search", icon: Search },
     ],
   },
   {
@@ -70,3 +87,5 @@ export const bottomNav: NavItem[] = [
   { title: "Notes", href: "/notes", icon: NotebookPen },
   { title: "More", href: "/settings", icon: Settings },
 ];
+
+export const allNavItems: NavItem[] = sidebarNav.flatMap((group) => group.items);

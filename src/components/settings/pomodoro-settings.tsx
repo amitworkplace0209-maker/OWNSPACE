@@ -1,13 +1,14 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/shared/form-field";
 import { updatePomodoroSettingsAction } from "@/lib/actions/time";
 
-type State = { error?: string };
+type State = { error?: string; data?: { id: string } };
 
 export function PomodoroSettings({
   focusMinutes,
@@ -21,6 +22,12 @@ export function PomodoroSettings({
   const [focus, setFocus] = useState(String(focusMinutes));
   const [brk, setBrk] = useState(String(breakMinutes));
   const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    if (state.data) {
+      toast.success("Pomodoro settings saved.");
+    }
+  }, [state.data]);
 
   function handleSubmit() {
     const fd = new FormData();

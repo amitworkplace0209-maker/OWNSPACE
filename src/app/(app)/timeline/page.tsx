@@ -3,7 +3,7 @@ import { getCalendarEvents, getReminders } from "@/lib/dal/calendar";
 import { getTasks } from "@/lib/dal/tasks";
 import { getAllMilestones } from "@/lib/dal/phases-milestones";
 import { PageHeader } from "@/components/shared/page-header";
-import { TimelineWorkspace, type TimelineItem } from "@/components/timeline/timeline-workspace";
+import { TimelineWorkspace, type TimelineItem, statusLabelOf } from "@/components/timeline/timeline-workspace";
 
 export const metadata = {
   title: "Timeline",
@@ -12,8 +12,10 @@ export const metadata = {
 export default async function TimelinePage() {
   await requireUser();
   const now = new Date();
-  const from = new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString();
-  const to = new Date(now.getFullYear(), now.getMonth() + 6, 0, 23, 59, 59).toISOString();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const from = new Date(y, m - 2, 1).toISOString();
+  const to = new Date(y, m + 6, 0, 23, 59, 59).toISOString();
 
   const [milestones, tasks, events, reminders] = await Promise.all([
     getAllMilestones(),
@@ -28,7 +30,7 @@ export default async function TimelinePage() {
       kind: "milestone" as const,
       date: m.due_date.slice(0, 10),
       title: m.title,
-      meta: `${(m as unknown as { project?: { name?: string } }).project?.name ?? "Milestone"} · ${m.status}`,
+      meta: `${(m as unknown as { project?: { name?: string } }).project?.name ?? "Milestone"} · ${statusLabelOf(m.status)}`,
       href: m.project_id ? `/projects/${m.project_id}/phases` : "/projects",
     }] : []),
     ...tasks
@@ -38,7 +40,7 @@ export default async function TimelinePage() {
         kind: "task" as const,
         date: t.due_date!.slice(0, 10),
         title: t.title,
-        meta: `${t.project_name} · ${t.status}`,
+        meta: `${t.project_name} · ${statusLabelOf(t.status)}`,
         href: t.project_id ? `/projects/${t.project_id}/tasks` : `/tasks/${t.id}`,
       })),
     ...events.map((e) => ({
@@ -54,7 +56,7 @@ export default async function TimelinePage() {
       kind: "reminder" as const,
       date: r.remind_at.slice(0, 10),
       title: r.title,
-      meta: `${r.remind_at.slice(11, 16)} · ${r.status}`,
+      meta: `${r.remind_at.slice(11, 16)} · ${statusLabelOf(r.status)}`,
       href: "/reminders",
     })),
   ];

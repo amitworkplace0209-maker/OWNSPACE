@@ -8,6 +8,10 @@ export const metadata = {
   title: "Daily",
 };
 
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 export default async function DailyPage({
   searchParams,
 }: {
@@ -15,12 +19,20 @@ export default async function DailyPage({
 }) {
   await requireUser();
   const params = await searchParams;
-  const date = params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date) ? params.date : new Date().toISOString().slice(0, 10);
+  const date = params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date) ? params.date : ymd(new Date());
+
+  const selected = new Date(`${date}T00:00:00`);
+  const weekStart = new Date(selected);
+  weekStart.setDate(selected.getDate() - selected.getDay());
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+  const from = ymd(weekStart);
+  const to = ymd(weekEnd);
 
   const [projects, dailyNotes, planning] = await Promise.all([
     getActiveProjects(),
-    getDailyNotes({ from: date, to: date }),
-    getPlanningEntries({ from: date, to: date }),
+    getDailyNotes({ from, to }),
+    getPlanningEntries({ from, to }),
   ]);
 
   return (

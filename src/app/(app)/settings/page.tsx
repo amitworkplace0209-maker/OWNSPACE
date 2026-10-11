@@ -58,14 +58,13 @@ export default async function SettingsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card id="appearance" className="scroll-mt-20">
           <CardHeader>
             <CardTitle>Appearance</CardTitle>
             <CardDescription>Choose how Ownspece looks.</CardDescription>
           </CardHeader>
           <CardContent>
             <AppearanceSettings
-              currentTheme={prefs?.theme ?? "system"}
               defaultView={prefs?.default_view ?? "dashboard"}
               dailyNoteTime={prefs?.daily_note_time ?? null}
             />
@@ -79,7 +78,6 @@ export default async function SettingsPage() {
           </CardHeader>
           <CardContent>
             <PreferencesSettings
-              theme={prefs?.theme ?? "system"}
               defaultView={prefs?.default_view ?? "dashboard"}
               dailyNoteTime={prefs?.daily_note_time ?? null}
             />

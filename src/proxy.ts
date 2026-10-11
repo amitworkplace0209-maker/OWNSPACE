@@ -1,11 +1,23 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/update-session";
 
-const publicRoutes = ["/", "/login", "/signup", "/auth/callback", "/auth/confirm"];
+const publicRoutes = [
+  "/",
+  "/login",
+  "/signup",
+  "/auth/callback",
+  "/auth/confirm",
+  "/auth/gdrive",
+  // Served by the service worker when the network is gone. It carries no user
+  // data, so it must render for a signed-out visitor too — otherwise the
+  // offline fallback bounces an authenticated user to the login screen.
+  "/offline",
+];
 
 const publicAssets = [
   "/manifest.webmanifest",
   "/sw.js",
+  "/offline",
   "/icon.svg",
   "/icon-192x192.png",
   "/icon-512x512.png",

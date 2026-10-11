@@ -44,6 +44,7 @@ export function TimeWorkspace({
   pomodoro,
   projects,
   tasks,
+  summary,
   focusMinutes,
   breakMinutes,
 }: {
@@ -52,6 +53,7 @@ export function TimeWorkspace({
   pomodoro: { running: PomodoroSession | null; todayCount: number; recent: PomodoroSession[] };
   projects: Project[];
   tasks: Task[];
+  summary: { todayMinutes: number; weekMinutes: number; monthMinutes: number };
   focusMinutes: number;
   breakMinutes: number;
 }) {
@@ -67,7 +69,13 @@ export function TimeWorkspace({
   const [manualOpen, setManualOpen] = useState(false);
   const [deleting, setDeleting] = useState<TimeEntry | null>(null);
   const [pomoTask, setPomoTask] = useState("");
+  const [entryProject, setEntryProject] = useState("");
   const [error, setError] = useState("");
+
+  const visibleEntries = entryProject
+    ? timeEntries.filter((e) => e.project_id === entryProject)
+    : timeEntries;
+  const visibleMinutes = visibleEntries.reduce((acc, e) => acc + (e.duration_minutes ?? 0), 0);
 
   async function startTimer() {
     if (!startProject) return setError("Select a project to start the timer.");
@@ -92,7 +100,20 @@ export function TimeWorkspace({
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="flex flex-col gap-4">
+      <div className="grid gap-3 sm:grid-cols-3">
+        {[
+          { label: "Today", value: summary.todayMinutes },
+          { label: "This week", value: summary.weekMinutes },
+          { label: "This month", value: summary.monthMinutes },
+        ].map((s) => (
+          <div key={s.label} className="rounded-xl border bg-card px-4 py-3">
+            <p className="text-xs text-muted-foreground">{s.label}</p>
+            <p className="text-xl font-semibold tabular-nums">{formatDurationMinutes(s.value)}</p>
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><Timer className="size-4" /> Timer</CardTitle>
@@ -176,16 +197,27 @@ export function TimeWorkspace({
       </Card>
 
       <Card className="lg:col-span-2">
-        <CardHeader>
-          <CardTitle>Time entries</CardTitle>
-          <CardDescription>{formatDurationMinutes(timeEntries.reduce((acc, e) => acc + (e.duration_minutes ?? 0), 0))} logged in view</CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-3">
+          <div className="flex flex-col gap-1">
+            <CardTitle>Time entries</CardTitle>
+            <CardDescription>{formatDurationMinutes(visibleMinutes)} logged in view</CardDescription>
+          </div>
+          <select
+            aria-label="Filter by project"
+            value={entryProject}
+            onChange={(e) => setEntryProject(e.target.value)}
+            className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none dark:bg-input/30"
+          >
+            <option value="">All projects</option>
+            {projects.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
+          </select>
         </CardHeader>
         <CardContent>
-          {timeEntries.length === 0 ? (
+          {visibleEntries.length === 0 ? (
             <EmptyState icon={Timer} title="No time logged" description="Start the timer or log time manually." />
           ) : (
             <ul className="flex flex-col">
-              {timeEntries.map((e) => (
+              {visibleEntries.map((e) => (
                 <li key={e.id} className="group flex items-center gap-3 border-b border-border/50 py-2.5 last:border-0">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm">
@@ -206,6 +238,7 @@ export function TimeWorkspace({
           )}
         </CardContent>
       </Card>
+      </div>
 
       <ConfirmDialog
         open={Boolean(deleting)}

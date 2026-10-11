@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
-import { useTransition, useState } from "react";
-import { Search, MoreHorizontal, Pencil, Trash2, FolderPlus } from "lucide-react";
+import { useEffect, useMemo, useTransition, useState } from "react";
+import { Search, MoreHorizontal, Pencil, Trash2, FolderPlus, LayoutGrid, List } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -11,6 +11,8 @@ import { Progress } from "@/components/ui/progress";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { ProjectFormDialog } from "@/components/projects/project-form-dialog";
+import { ProjectWizard } from "@/components/project-creator/project-wizard";
+import type { WizardFile } from "@/components/project-creator/wizard-step-finance";
 import { ProjectStatusBadge, PriorityBadge, projectStatusLabel } from "@/components/shared/badges";
 import {
   DropdownMenu,
@@ -32,7 +34,16 @@ const statusTabs: Array<{ label: string; value: ProjectStatus | "all" }> = [
   { label: "Archived", value: "archived" },
 ];
 
-function ProjectCard({
+const sortOptions: Array<{ value: "recent" | "name" | "due" | "priority"; label: string }> = [
+  { value: "recent", label: "Recent" },
+  { value: "name", label: "Name" },
+  { value: "due", label: "Due date" },
+  { value: "priority", label: "Priority" },
+];
+
+const priorityRank: Record<string, number> = { none: 0, low: 1, medium: 2, high: 3, urgent: 4 };
+
+function ProjectActions({
   project,
   onEdit,
   onDelete,
@@ -50,15 +61,98 @@ function ProjectCard({
   }
 
   return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button variant="ghost" size="icon-sm" aria-label={`Actions for ${project.name}`}>
+            <MoreHorizontal className="size-4" />
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuItem onClick={() => onEdit(project)}>
+          <Pencil className="size-4" /> Edit
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {project.status !== "active" ? (
+          <DropdownMenuItem
+            onClick={() => run(() => setProjectStatusAction(project.id, "active"))}
+          >
+            Mark active
+          </DropdownMenuItem>
+        ) : null}
+        {project.status !== "on_hold" ? (
+          <DropdownMenuItem
+            onClick={() => run(() => setProjectStatusAction(project.id, "on_hold"))}
+          >
+            Put on hold
+          </DropdownMenuItem>
+        ) : null}
+        {project.status !== "completed" ? (
+          <DropdownMenuItem
+            onClick={() => run(() => setProjectStatusAction(project.id, "completed"))}
+          >
+            Mark completed
+          </DropdownMenuItem>
+        ) : null}
+        {project.status !== "archived" && project.status !== "completed" ? (
+          <DropdownMenuItem
+            onClick={() => run(() => setProjectStatusAction(project.id, "archived"))}
+          >
+            Archive
+          </DropdownMenuItem>
+        ) : null}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          variant="destructive"
+          disabled={pending}
+          onClick={() => onDelete(project)}
+        >
+          <Trash2 className="size-4" /> Delete
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function ProjectIcon({ project }: { project: ProjectWithTags }) {
+  return (
+    <Link
+      href={`/projects/${project.id}`}
+      className="flex size-9 shrink-0 items-center justify-center rounded-lg text-sm font-medium text-white hover:opacity-90"
+      style={{ backgroundColor: project.color ?? "var(--primary)" }}
+      aria-label={project.name}
+    >
+      {project.icon ?? project.name.slice(0, 2)}
+    </Link>
+  );
+}
+
+function DueLabel({ dueDate }: { dueDate: string | null }) {
+  if (!dueDate) return <span className="text-xs text-muted-foreground">No due date</span>;
+  const overdue = dueDate < new Date().toISOString().slice(0, 10);
+  return (
+    <span className={cn("text-xs", overdue ? "text-destructive" : "text-muted-foreground")}>
+      {overdue ? "Overdue " : "Due "}
+      {new Date(dueDate).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+    </span>
+  );
+}
+
+function ProjectCard({
+  project,
+  onEdit,
+  onDelete,
+}: {
+  project: ProjectWithTags;
+  onEdit: (project: Project) => void;
+  onDelete: (project: Project) => void;
+}) {
+  return (
     <Card className="group relative flex flex-col gap-3 p-4 transition hover:border-primary/40">
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-sm font-medium text-white"
-            style={{ backgroundColor: project.color ?? "var(--primary)" }}
-          >
-            {project.icon ?? project.name.slice(0, 2)}
-          </span>
+          <ProjectIcon project={project} />
           <div className="flex min-w-0 flex-col gap-0.5">
             <Link
               href={`/projects/${project.id}`}
@@ -66,65 +160,11 @@ function ProjectCard({
             >
               {project.name}
             </Link>
-            <span className="text-xs text-muted-foreground">
-              {project.due_date
-                ? `Due ${new Date(project.due_date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
-                : "No due date"}
-            </span>
+            <DueLabel dueDate={project.due_date} />
           </div>
         </div>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button variant="ghost" size="icon-sm" aria-label={`Actions for ${project.name}`}>
-                <MoreHorizontal className="size-4" />
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="end" className="w-44">
-            <DropdownMenuItem onClick={() => onEdit(project)}>
-              <Pencil className="size-4" /> Edit
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            {project.status !== "active" ? (
-              <DropdownMenuItem
-                onClick={() => run(() => setProjectStatusAction(project.id, "active"))}
-              >
-                Mark active
-              </DropdownMenuItem>
-            ) : null}
-            {project.status !== "on_hold" ? (
-              <DropdownMenuItem
-                onClick={() => run(() => setProjectStatusAction(project.id, "on_hold"))}
-              >
-                Put on hold
-              </DropdownMenuItem>
-            ) : null}
-            {project.status !== "completed" ? (
-              <DropdownMenuItem
-                onClick={() => run(() => setProjectStatusAction(project.id, "completed"))}
-              >
-                Mark completed
-              </DropdownMenuItem>
-            ) : null}
-            {project.status !== "archived" && project.status !== "completed" ? (
-              <DropdownMenuItem
-                onClick={() => run(() => setProjectStatusAction(project.id, "archived"))}
-              >
-                Archive
-              </DropdownMenuItem>
-            ) : null}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              variant="destructive"
-              disabled={pending}
-              onClick={() => onDelete(project)}
-            >
-              <Trash2 className="size-4" /> Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <ProjectActions project={project} onEdit={onEdit} onDelete={onDelete} />
       </div>
 
       {project.description ? (
@@ -147,7 +187,7 @@ function ProjectCard({
       <div className="mt-auto flex flex-col gap-1.5">
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>Progress</span>
-          <span className="tabular-nums">{project.progress}%</span>
+          <span className="tabular-nums">{project.progress ?? 0}%</span>
         </div>
         <Progress value={project.progress ?? 0} className="h-1.5" />
       </div>
@@ -160,14 +200,72 @@ function ProjectCard({
   );
 }
 
+function ProjectListRow({
+  project,
+  onEdit,
+  onDelete,
+}: {
+  project: ProjectWithTags;
+  onEdit: (project: Project) => void;
+  onDelete: (project: Project) => void;
+}) {
+  return (
+    <li>
+      <div className="flex items-center gap-3 border-b border-border/50 px-1 py-2.5 last:border-0 hover:bg-accent/30">
+        <ProjectIcon project={project} />
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <Link
+            href={`/projects/${project.id}`}
+            className="truncate text-sm font-medium hover:underline"
+          >
+            {project.name}
+          </Link>
+          {project.description ? (
+            <p className="truncate text-xs text-muted-foreground">{project.description}</p>
+          ) : null}
+        </div>
+
+        {project.tag_names.length > 0 ? (
+          <span className="hidden max-w-40 truncate text-xs text-muted-foreground md:block">
+            {project.tag_names.join(" · ")}
+          </span>
+        ) : null}
+
+        <div className="hidden w-28 shrink-0 flex-col gap-1 sm:flex">
+          <Progress value={project.progress ?? 0} className="h-1.5" />
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>Progress</span>
+            <span className="tabular-nums">{project.progress ?? 0}%</span>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
+            <ProjectStatusBadge status={project.status} />
+            <PriorityBadge priority={project.priority} />
+          </div>
+          <DueLabel dueDate={project.due_date} />
+        </div>
+
+        <ProjectActions project={project} onEdit={onEdit} onDelete={onDelete} />
+      </div>
+    </li>
+  );
+}
+
 export function ProjectsWorkspace({
   projects,
   tags,
+  files,
   initialStatus,
+  openWizard = false,
 }: {
   projects: ProjectWithTags[];
   tags: Tag[];
+  files: WizardFile[];
   initialStatus: string;
+  /** Opens the 12-step wizard straight away (the ?new=1 shortcut). */
+  openWizard?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -175,9 +273,25 @@ export function ProjectsWorkspace({
 
   const [query, setQuery] = useState("");
   const [tagId, setTagId] = useState<string | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [view, setView] = useState<"grid" | "list">("grid");
+  const [sort, setSort] = useState<"recent" | "name" | "due" | "priority">("recent");
+  const [wizardOpen, setWizardOpen] = useState(openWizard);
   const [editing, setEditing] = useState<Project | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
   const [deleting, setDeleting] = useState<Project | null>(null);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("ownspece:projects:view");
+    if (saved === "list" || saved === "grid") {
+      const id = window.requestAnimationFrame(() => setView(saved));
+      return () => window.cancelAnimationFrame(id);
+    }
+  }, []);
+
+  function changeView(next: "grid" | "list") {
+    setView(next);
+    window.localStorage.setItem("ownspece:projects:view", next);
+  }
 
   function setStatus(status: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -191,12 +305,26 @@ export function ProjectsWorkspace({
       ? "all"
       : (initialStatus as ProjectStatus);
 
-  const filtered = projects.filter((p) => {
-    if (status !== "all" && p.status !== status) return false;
-    if (tagId && !p.tag_ids.includes(tagId)) return false;
-    if (query.trim() && !p.name.toLowerCase().includes(query.trim().toLowerCase())) return false;
-    return true;
-  });
+  const counts = useMemo(() => {
+    const c: Record<string, number> = { all: projects.length };
+    for (const p of projects) c[p.status] = (c[p.status] ?? 0) + 1;
+    return c;
+  }, [projects]);
+
+  const filtered = useMemo(() => {
+    const list = projects.filter((p) => {
+      if (status !== "all" && p.status !== status) return false;
+      if (tagId && !p.tag_ids.includes(tagId)) return false;
+      if (query.trim() && !p.name.toLowerCase().includes(query.trim().toLowerCase())) return false;
+      return true;
+    });
+
+    if (sort === "name") list.sort((a, b) => a.name.localeCompare(b.name));
+    else if (sort === "due") list.sort((a, b) => (a.due_date ?? "9999-99-99").localeCompare(b.due_date ?? "9999-99-99"));
+    else if (sort === "priority") list.sort((a, b) => priorityRank[b.priority] - priorityRank[a.priority]);
+
+    return list;
+  }, [projects, status, tagId, query, sort]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -207,13 +335,23 @@ export function ProjectsWorkspace({
               key={tab.value}
               onClick={() => setStatus(tab.value)}
               className={cn(
-                "rounded-md px-3 py-1 text-sm font-medium transition",
+                "flex items-center gap-1.5 rounded-md px-3 py-1 text-sm font-medium transition",
                 status === tab.value
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:bg-accent"
               )}
             >
               {tab.label}
+              <span
+                className={cn(
+                  "rounded-full px-1.5 text-xs tabular-nums",
+                  status === tab.value
+                    ? "bg-primary-foreground/20 text-primary-foreground"
+                    : "bg-muted text-muted-foreground"
+                )}
+              >
+                {counts[tab.value] ?? 0}
+              </span>
             </button>
           ))}
         </div>
@@ -230,7 +368,43 @@ export function ProjectsWorkspace({
           />
         </div>
 
-        <Button onClick={() => { setEditing(null); setDialogOpen(true); }}>
+        <select
+          value={sort}
+          onChange={(e) => setSort(e.target.value as typeof sort)}
+          className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring dark:bg-input/30"
+          aria-label="Sort projects"
+        >
+          {sortOptions.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+
+        <div className="flex items-center gap-1 rounded-lg border bg-card p-1">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Grid view"
+            aria-pressed={view === "grid"}
+            className={cn(view === "grid" && "bg-accent text-foreground")}
+            onClick={() => changeView("grid")}
+          >
+            <LayoutGrid className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="List view"
+            aria-pressed={view === "list"}
+            className={cn(view === "list" && "bg-accent text-foreground")}
+            onClick={() => changeView("list")}
+          >
+            <List className="size-4" />
+          </Button>
+        </div>
+
+        <Button onClick={() => setWizardOpen(true)}>
           <FolderPlus /> New project
         </Button>
       </div>
@@ -277,28 +451,41 @@ export function ProjectsWorkspace({
           }
           action={
             projects.length === 0 ? (
-              <Button onClick={() => { setEditing(null); setDialogOpen(true); }}>
+              <Button onClick={() => setWizardOpen(true)}>
                 <FolderPlus /> Create a project
               </Button>
             ) : undefined
           }
         />
-      ) : (
+      ) : view === "grid" ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((project) => (
             <ProjectCard
               key={project.id}
               project={project}
-              onEdit={(p) => { setEditing(p); setDialogOpen(true); }}
+              onEdit={(p) => { setEditing(p); setEditOpen(true); }}
               onDelete={(p) => setDeleting(p)}
             />
           ))}
         </div>
+      ) : (
+        <ul className="rounded-xl border bg-card px-3">
+          {filtered.map((project) => (
+            <ProjectListRow
+              key={project.id}
+              project={project}
+              onEdit={(p) => { setEditing(p); setEditOpen(true); }}
+              onDelete={(p) => setDeleting(p)}
+            />
+          ))}
+        </ul>
       )}
 
+      <ProjectWizard open={wizardOpen} onOpenChange={setWizardOpen} files={files} />
+
       <ProjectFormDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
+        open={editOpen}
+        onOpenChange={setEditOpen}
         project={editing}
       />
 

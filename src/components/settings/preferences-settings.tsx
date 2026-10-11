@@ -1,13 +1,14 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/shared/form-field";
 import { updatePreferencesAction } from "@/lib/actions/profile";
 
-type PrefsState = { error?: string };
+type PrefsState = { error?: string; data?: { id: string } };
 
 const views = [
   { value: "dashboard", label: "Dashboard" },
@@ -18,11 +19,9 @@ const views = [
 ];
 
 export function PreferencesSettings({
-  theme,
   defaultView,
   dailyNoteTime,
 }: {
-  theme: string;
   defaultView: string;
   dailyNoteTime: string | null;
 }) {
@@ -31,9 +30,16 @@ export function PreferencesSettings({
   const [dirty, setDirty] = useState(false);
   const [daily, setDaily] = useState(dailyNoteTime?.slice(0, 5) ?? "");
 
+  useEffect(() => {
+    if (state.data) {
+      toast.success("Preferences saved.");
+    }
+  }, [state.data]);
+
+  // Only the fields this form owns are sent. Re-posting `theme` here used to
+  // overwrite a theme the user had just changed elsewhere on the page.
   function handleSubmit(formData: FormData) {
     const fd = new FormData();
-    fd.set("theme", theme);
     fd.set("default_view", String(formData.get("default_view") ?? defaultView));
     fd.set("daily_note_time", daily.trim());
     formAction(fd);

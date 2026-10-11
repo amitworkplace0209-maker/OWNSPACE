@@ -137,3 +137,92 @@ export function toIsoSubmit(value: string): string {
   }
   return trimmed;
 }
+// ---------------------------------------------------------------------------
+// Money
+// ---------------------------------------------------------------------------
+
+/**
+ * Currency formatters, cached per code.
+ *
+ * `Intl.NumberFormat` construction is expensive enough that calling it inside a
+ * table row shows up in a profile, so each currency is built once.
+ */
+const moneyFormatters = new Map<string, Intl.NumberFormat>();
+
+function moneyFormatter(currency: string, compact: boolean): Intl.NumberFormat {
+  const key = `${currency}:${compact}`;
+  let formatter = moneyFormatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency,
+      // Compact mode drops the decimals: "?1.2Cr" reads better on a KPI tile
+      // than "?1,20,00,000.00".
+      notation: compact ? "compact" : "standard",
+      maximumFractionDigits: compact ? 1 : 2,
+      minimumFractionDigits: compact ? 0 : 2,
+    });
+    moneyFormatters.set(key, formatter);
+  }
+  return formatter;
+}
+
+/**
+ * Formats an amount as currency.
+ *
+ * Defaults to INR and formats with `en-IN`, which is the part that matters:
+ * Indian grouping is 2-2-3, so twelve lakh fifty-six thousand renders
+ * "?12,56,000.00" not "?1,256,000.00" as it would under `en-US`. Getting
+ * this wrong makes every large figure look wrong to the people reading it.
+ */
+export function formatCurrency(
+  value: number | null | undefined,
+  currency = "INR",
+  opts?: { compact?: boolean; fallback?: string }
+): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return opts?.fallback ?? "—";
+  }
+
+  try {
+    return moneyFormatter(currency, opts?.compact ?? false).format(value);
+  } catch {
+    // An unknown code would throw; showing the bare number beats an error.
+    return `${value.toFixed(2)} ${currency}`;
+  }
+}
+
+/** Signed amount, for income/expense rows where the direction is the point. */
+export function formatSignedCurrency(
+  value: number | null | undefined,
+  currency = "INR",
+  opts?: { compact?: boolean }
+): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  const formatted = formatCurrency(Math.abs(value), currency, opts);
+  if (value === 0) return formatted;
+  return `${value > 0 ? "+" : "-"}${formatted}`;
+}
+
+/**
+ * A percentage from a part of a total.
+ *
+ * Returns 0 rather than NaN when the total is zero an empty month is normal,
+ * and "NaN%" would read as a bug.
+ */
+export function formatPercent(part: number, total: number, decimals = 0): string {
+  if (!Number.isFinite(part) || !Number.isFinite(total) || total === 0) return "0%";
+  const value = (part / total) * 100;
+  return `${value.toFixed(decimals)}%`;
+}
+
+/** A plain grouped number, for counts and quantities with no currency. */
+export function formatNumber(value: number | null | undefined, fallback = "0"): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return fallback;
+  return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(value);
+}
+
+/** True when a currency symbol leads the string, which Indian formats do. */
+export function isNegativeCurrency(formatted: string): boolean {
+  return formatted.startsWith("-") || formatted.includes("-?") || formatted.startsWith("-");
+}

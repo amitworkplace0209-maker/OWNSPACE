@@ -12,7 +12,7 @@ export const getTimeEntries = cache(
 
     let query = supabase
       .from("time_entries")
-      .select("*, project(id, name, color), task(id, title)")
+      .select("*, project:projects(id, name, color), task:tasks(id, title)")
       .eq("user_id", user.id)
       .order("started_at", { ascending: false });
 
@@ -34,7 +34,7 @@ export const getRunningTimer = cache(
 
     const { data, error } = await supabase
       .from("time_entries")
-      .select("*, project(id, name), task(id, title)")
+      .select("*, project:projects(id, name), task:tasks(id, title)")
       .eq("user_id", user.id)
       .is("ended_at", null)
       .order("started_at", { ascending: false })
@@ -70,7 +70,7 @@ export const getPomodoroStatus = cache(async (): Promise<PomodoroStatusResult> =
   const [runningRes, todayRes, recentRes] = await Promise.all([
     supabase
       .from("pomodoro_sessions")
-      .select("*, task(id, title)")
+      .select("*, task:tasks(id, title)")
       .eq("user_id", user.id)
       .eq("status", "running")
       .order("started_at", { ascending: false })
@@ -97,6 +97,44 @@ export const getPomodoroStatus = cache(async (): Promise<PomodoroStatusResult> =
   };
 });
 
+export type TimeSummary = {
+  todayMinutes: number;
+  weekMinutes: number;
+  monthMinutes: number;
+};
+
+export const getTimeSummary = cache(async (): Promise<TimeSummary> => {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const now = new Date();
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const startOfWeek = new Date(startOfToday);
+  startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const earliest = startOfWeek < startOfMonth ? startOfWeek : startOfMonth;
+
+  const { data, error } = await supabase
+    .from("time_entries")
+    .select("duration_minutes, started_at")
+    .eq("user_id", user.id)
+    .gte("started_at", earliest.toISOString());
+
+  const summary: TimeSummary = { todayMinutes: 0, weekMinutes: 0, monthMinutes: 0 };
+  if (error || !data) return summary;
+
+  for (const e of data) {
+    const minutes = e.duration_minutes ?? 0;
+    const started = new Date(e.started_at);
+    if (started >= startOfToday) summary.todayMinutes += minutes;
+    if (started >= startOfWeek) summary.weekMinutes += minutes;
+    if (started >= startOfMonth) summary.monthMinutes += minutes;
+  }
+
+  return summary;
+});
+
 export const getFiles = cache(
   async (options: { projectId?: string; taskId?: string; limit?: number } = {}) => {
     const user = await requireUser();
@@ -104,7 +142,7 @@ export const getFiles = cache(
 
     let query = supabase
       .from("files")
-      .select("*, project(id, name), task(id, title)")
+      .select("*, project:projects(id, name), task:tasks(id, title)")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
@@ -159,7 +197,7 @@ export const getAllWikiPages = cache(async (): Promise<WikiPageWithProject[]> =>
 
   const { data, error } = await supabase
     .from("wiki_pages")
-    .select("*, project(id, name)")
+    .select("*, project:projects(id, name)")
     .eq("user_id", user.id)
     .order("updated_at", { ascending: false });
 

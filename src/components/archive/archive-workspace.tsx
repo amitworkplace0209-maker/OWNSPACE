@@ -16,16 +16,20 @@ import { useState } from "react";
 export function ArchiveWorkspace({ projects }: { projects: Project[] }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState<Project | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function restore(project: Project) {
+    setError(null);
     startTransition(async () => {
-      await setProjectStatusAction(project.id, "active");
+      const res = await setProjectStatusAction(project.id, "active");
+      if (res.error) { setError(res.error); return; }
       router.refresh();
     });
   }
 
   function permanentDelete(project: Project) {
+    setError(null);
     setDeleting(project);
   }
 
@@ -73,7 +77,7 @@ export function ArchiveWorkspace({ projects }: { projects: Project[] }) {
                 <Button variant="outline" size="sm" onClick={() => restore(project)} disabled={pending}>
                   <ArchiveRestore /> Restore
                 </Button>
-                <Button variant="destructive" size="sm" onClick={() => permanentDelete(project)}>
+                <Button variant="destructive" size="sm" onClick={() => permanentDelete(project)} disabled={pending}>
                   <Trash2 /> Delete forever
                 </Button>
               </div>
@@ -81,6 +85,10 @@ export function ArchiveWorkspace({ projects }: { projects: Project[] }) {
           ))}
         </div>
       )}
+
+      {error ? (
+        <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
+      ) : null}
 
       <ConfirmDialog
         open={Boolean(deleting)}
@@ -92,9 +100,13 @@ export function ArchiveWorkspace({ projects }: { projects: Project[] }) {
         confirmLabel="Delete forever"
         onConfirm={async () => {
           if (!deleting) return;
-          await deleteProjectAction(deleting.id);
-          setDeleting(null);
-          router.refresh();
+          setError(null);
+          startTransition(async () => {
+            const res = await deleteProjectAction(deleting.id);
+            if (res.error) { setError(res.error); return; }
+            setDeleting(null);
+            router.refresh();
+          });
         }}
       />
     </div>

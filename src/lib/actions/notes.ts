@@ -30,11 +30,10 @@ export async function createNoteAction(
     entityType: "note",
     entityId: data.id,
     summary: "Created note",
-    metadata: { title: parsed.data.title },
+    metadata: { title: parsed.data.title, projectId: parsed.data.project_id },
   });
 
-  revalidatePath("/notes");
-  revalidatePath("/dashboard");
+  revalidateNotePaths(data.id);
   return { data: { id: data.id } };
 }
 
@@ -71,9 +70,16 @@ export async function updateNoteAction(
     .eq("id", noteId);
   if (error) return { error: friendlyError(error, "Could not update the note.") };
 
-  revalidatePath("/notes");
-  revalidatePath(`/notes/${noteId}`);
-  revalidatePath("/dashboard");
+  await logActivity({
+    userId: user.id,
+    activityType: "note",
+    entityType: "note",
+    entityId: noteId,
+    summary: "Updated note",
+    metadata: { title: parsed.data.title },
+  });
+
+  revalidateNotePaths(noteId);
   return { data: { id: noteId } };
 }
 
@@ -82,26 +88,46 @@ export async function deleteNoteAction(noteId: string): Promise<{ error?: string
   const supabase = await createClient();
   const { error } = await supabase.from("notes").delete().eq("user_id", user.id).eq("id", noteId);
   if (error) return { error: friendlyError(error, "Could not delete the note.") };
+
+  await logActivity({
+    userId: user.id,
+    activityType: "note",
+    entityType: "note",
+    entityId: noteId,
+    summary: "Deleted note",
+  });
+
+  revalidateNotePaths(noteId);
+  return {};
+}
+
+/**
+ * Notes are read by five places — the list, the detail page, the dashboard
+ * card, the project's notes tab and global search — so a mutation that only
+ * revalidates `/notes` leaves the other four showing a note that has moved.
+ */
+function revalidateNotePaths(noteId?: string): void {
   revalidatePath("/notes");
   revalidatePath("/dashboard");
-  return {};
+  revalidatePath("/search");
+  revalidatePath("/projects", "layout");
+  if (noteId) revalidatePath(`/notes/${noteId}`);
 }
 
 export async function toggleNotePinAction(noteId: string): Promise<{ error?: string }> {
   const user = await getUserOrRedirect();
-  return toggleNoteFlag(user.id, noteId, "is_pinned", "/notes");
+  return toggleNoteFlag(user.id, noteId, "is_pinned");
 }
 
 export async function toggleNoteFavoriteAction(noteId: string): Promise<{ error?: string }> {
   const user = await getUserOrRedirect();
-  return toggleNoteFlag(user.id, noteId, "is_favorited", "/notes");
+  return toggleNoteFlag(user.id, noteId, "is_favorited");
 }
 
 async function toggleNoteFlag(
   userId: string,
   noteId: string,
-  field: "is_pinned" | "is_favorited",
-  path: string
+  field: "is_pinned" | "is_favorited"
 ): Promise<{ error?: string }> {
   const supabase = await createClient();
   const { data } = await supabase
@@ -121,9 +147,110 @@ async function toggleNoteFlag(
     .eq("id", noteId);
   if (error) return { error: friendlyError(error, "Could not update the note.") };
 
-  revalidatePath(path);
-  revalidatePath("/notes");
+  // The dashboard's "Recent notes" card renders is_pinned, so /dashboard has
+  // to be revalidated too — it previously was not.
+  revalidateNotePaths(noteId);
   return {};
+}
+
+export type NoteBulkResult = { error?: string; affected?: number };
+
+/**
+ * Bulk actions for the notes grid.
+ *
+ * `moveToProject` takes a project id or null for "personal"; clearing a
+ * project deliberately nulls it rather than deleting the notes.
+ */
+export async function bulkSetNotesPinnedAction(
+  noteIds: string[],
+  pinned: boolean
+): Promise<NoteBulkResult> {
+  const user = await getUserOrRedirect();
+  if (noteIds.length === 0) return { affected: 0 };
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("notes")
+    .update({ is_pinned: pinned })
+    .eq("user_id", user.id)
+    .in("id", noteIds);
+  if (error) return { error: friendlyError(error, "Could not update the notes.") };
+
+  revalidateNotePaths();
+  return { affected: noteIds.length };
+}
+
+export async function bulkSetNotesFavoritedAction(
+  noteIds: string[],
+  favorited: boolean
+): Promise<NoteBulkResult> {
+  const user = await getUserOrRedirect();
+  if (noteIds.length === 0) return { affected: 0 };
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("notes")
+    .update({ is_favorited: favorited })
+    .eq("user_id", user.id)
+    .in("id", noteIds);
+  if (error) return { error: friendlyError(error, "Could not update the notes.") };
+
+  revalidateNotePaths();
+  return { affected: noteIds.length };
+}
+
+/**
+ * Moves notes into a project, or back to personal when `projectId` is null.
+ *
+ * `node_id` is cleared alongside, because a section belongs to the project it
+ * was picked from and leaving it behind would file the note under a section of
+ * a project it no longer belongs to.
+ */
+export async function bulkMoveNotesAction(
+  noteIds: string[],
+  projectId: string | null
+): Promise<NoteBulkResult> {
+  const user = await getUserOrRedirect();
+  if (noteIds.length === 0) return { affected: 0 };
+  const supabase = await createClient();
+
+  const patch: Record<string, unknown> = { project_id: projectId, node_id: null };
+
+  if (projectId) {
+    const { data: owned } = await supabase
+      .from("projects")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("id", projectId)
+      .maybeSingle();
+    if (!owned) return { error: "Project not found." };
+  }
+
+  const { error } = await supabase
+    .from("notes")
+    .update(patch)
+    .eq("user_id", user.id)
+    .in("id", noteIds);
+  if (error) return { error: friendlyError(error, "Could not move the notes.") };
+
+  revalidateNotePaths();
+  return { affected: noteIds.length };
+}
+
+export async function bulkDeleteNotesAction(noteIds: string[]): Promise<NoteBulkResult> {
+  const user = await getUserOrRedirect();
+  if (noteIds.length === 0) return { affected: 0 };
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("notes")
+    .delete()
+    .eq("user_id", user.id)
+    .in("id", noteIds);
+  if (error) return { error: friendlyError(error, "Could not delete the notes.") };
+
+  revalidateNotePaths();
+  return { affected: noteIds.length };
 }
 
 export async function restoreNoteVersionAction(
@@ -167,8 +294,7 @@ export async function restoreNoteVersionAction(
   if (error) return { error: friendlyError(error, "Could not restore the note version.") };
 
   revalidatePath(`/notes/${noteId}`);
-  revalidatePath("/notes");
-  revalidatePath("/dashboard");
+  revalidateNotePaths(noteId);
   return {};
 }
 
@@ -203,7 +329,8 @@ export async function setNoteTagsAction(input: { noteId: string; tagIds: string[
     if (error) return { error: friendlyError(error, "Could not update tags.") };
   }
 
-  revalidatePath(`/notes/${input.noteId}`);
-  revalidatePath("/notes");
+  // /tags shows per-tag note counts, so editing a note's tags changes that page.
+  revalidatePath("/tags");
+  revalidateNotePaths(input.noteId);
   return {};
 }

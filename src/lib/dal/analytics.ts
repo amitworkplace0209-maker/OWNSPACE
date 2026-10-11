@@ -3,6 +3,7 @@ import "server-only";
 import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/dal";
+import { todayIsoDate } from "@/lib/dashboard-logic";
 import type { Priority, TaskStatus } from "@/types";
 
 export type AnalyticsSnapshot = {
@@ -24,7 +25,7 @@ export type AnalyticsSnapshot = {
     completionRate: number;
   };
   time: { totalMinutes: number; todayMinutes: number; onRunningTask: boolean };
-  pomodoro: { totalSessions: number; todaySessions: number; totalFocusMinutes: number };
+  pomodoro: { running: boolean; totalSessions: number; todaySessions: number; totalFocusMinutes: number };
   notes: { total: number; updatedThisWeek: number };
 };
 
@@ -32,8 +33,11 @@ export const getAnalyticsSnapshot = cache(async (): Promise<AnalyticsSnapshot> =
   const user = await requireUser();
   const supabase = await createClient();
 
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const weekAgo = new Date();
+  const now = new Date();
+  // UTC date string, matching every other due_date filter in the app so the
+  // dashboard's counts and the /tasks list it links to agree.
+  const todayStr = todayIsoDate(now);
+  const weekAgo = new Date(now);
   weekAgo.setDate(weekAgo.getDate() - 7);
 
   const [projectsRes, tasksRes, timeRes, pomoRes, notesRes, notesWeek] =
@@ -46,7 +50,11 @@ export const getAnalyticsSnapshot = cache(async (): Promise<AnalyticsSnapshot> =
         .eq("user_id", user.id),
       supabase.from("pomodoro_sessions").select("status, focus_duration_minutes, started_at").eq("user_id", user.id),
       supabase.from("notes").select("id", { count: "exact", head: true }).eq("user_id", user.id),
-      supabase.from("notes").select("id", { count: "exact", head: true }).gte("updated_at", weekAgo.toISOString()),
+      supabase
+        .from("notes")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", user.id)
+        .gte("updated_at", weekAgo.toISOString()),
     ]);
 
   const snapshot: AnalyticsSnapshot = {
@@ -61,7 +69,7 @@ export const getAnalyticsSnapshot = cache(async (): Promise<AnalyticsSnapshot> =
       completionRate: 0,
     },
     time: { totalMinutes: 0, todayMinutes: 0, onRunningTask: false },
-    pomodoro: { totalSessions: 0, todaySessions: 0, totalFocusMinutes: 0 },
+    pomodoro: { running: false, totalSessions: 0, todaySessions: 0, totalFocusMinutes: 0 },
     notes: { total: 0, updatedThisWeek: 0 },
   };
 
@@ -106,6 +114,7 @@ export const getAnalyticsSnapshot = cache(async (): Promise<AnalyticsSnapshot> =
   // Pomodoro
   const pomo = pomoRes.data ?? [];
   for (const s of pomo) {
+    if (s.status === "running") snapshot.pomodoro.running = true;
     if (s.status === "completed") {
       snapshot.pomodoro.totalSessions += 1;
       snapshot.pomodoro.totalFocusMinutes += s.focus_duration_minutes;
@@ -161,29 +170,33 @@ export const getActivityTrend = cache(async (days = 30): Promise<ActivityDay[]> 
       .gte("created_at", cutoff.toISOString()),
   ]);
 
-  const dayKey = (iso: string) => iso.slice(0, 10);
+  const localDay = (iso: string) => {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
   const buckets = new Map<string, ActivityDay>();
   for (let i = 0; i < days; i++) {
-    const start = new Date(now);
-    start.setDate(start.getDate() - (days - 1 - i));
-    const key = start.toISOString().slice(0, 10);
+    const d = new Date(now);
+    d.setDate(d.getDate() - (days - 1 - i));
+    d.setHours(0, 0, 0, 0);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     buckets.set(key, { day: key, tasksCompleted: 0, minutesTracked: 0, pomodoros: 0, notesCreated: 0 });
   }
 
   for (const t of tasksRes.data ?? []) {
-    const bucket = buckets.get(dayKey(t.updated_at));
+    const bucket = buckets.get(localDay(t.updated_at));
     if (bucket) bucket.tasksCompleted += 1;
   }
   for (const e of timeRes.data ?? []) {
-    const bucket = buckets.get(dayKey(e.started_at));
+    const bucket = buckets.get(localDay(e.started_at));
     if (bucket) bucket.minutesTracked += e.duration_minutes ?? 0;
   }
   for (const s of pomoRes.data ?? []) {
-    const bucket = buckets.get(dayKey(s.started_at));
+    const bucket = buckets.get(localDay(s.started_at));
     if (bucket) bucket.pomodoros += 1;
   }
   for (const n of notesRes.data ?? []) {
-    const bucket = buckets.get(dayKey(n.created_at));
+    const bucket = buckets.get(localDay(n.created_at));
     if (bucket) bucket.notesCreated += 1;
   }
 
@@ -214,7 +227,6 @@ export const getProjectAnalytics = cache(async (projectId: string): Promise<Proj
       supabase.from("project_phases").select("status").eq("user_id", user.id).eq("project_id", projectId),
       supabase.from("milestones").select("status").eq("user_id", user.id).eq("project_id", projectId),
       supabase.from("time_entries").select("duration_minutes").eq("user_id", user.id).eq("project_id", projectId),
-      supabase.from("tasks").select("id").eq("user_id", user.id).eq("project_id", projectId),
       supabase.from("notes").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("project_id", projectId),
       supabase.from("wiki_pages").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("project_id", projectId),
     ]);

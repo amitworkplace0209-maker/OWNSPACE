@@ -50,7 +50,7 @@ export default async function AnalyticsPage() {
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             {TASK_STATUSES.map((s) => {
-              const count = snapshot.tasks.byStatus[s];
+              const count = snapshot.tasks.byStatus[s] ?? 0;
               const pct = snapshot.tasks.total ? Math.round((count / snapshot.tasks.total) * 100) : 0;
               return (
                 <div key={s} className="flex items-center gap-3">
@@ -72,7 +72,7 @@ export default async function AnalyticsPage() {
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             {PRIORITIES.map((p) => {
-              const count = snapshot.tasks.byPriority[p];
+              const count = snapshot.tasks.byPriority[p] ?? 0;
               const pct = snapshot.tasks.total ? Math.round((count / snapshot.tasks.total) * 100) : 0;
               return (
                 <div key={p} className="flex items-center gap-3">
@@ -104,6 +104,9 @@ export default async function AnalyticsPage() {
           <CardDescription>Completion and activity per project</CardDescription>
         </CardHeader>
         <CardContent className="overflow-x-auto">
+          {projectMetrics.length === 0 ? (
+            <p className="py-4 text-sm text-muted-foreground">No project analytics yet.</p>
+          ) : (
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b text-left text-xs text-muted-foreground">
@@ -140,10 +143,11 @@ export default async function AnalyticsPage() {
               })}
             </tbody>
           </table>
+          )}
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Notes" value={String(snapshot.notes.total)} sub={`${snapshot.notes.updatedThisWeek} updated this week`} />
         <StatCard label="Notes per project" value={formatNotesPerProject(snapshot.notes.total, projectMetrics.length)} sub={`${projectMetrics.length} active projects analysed`} />
       </div>

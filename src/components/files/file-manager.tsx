@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Download, Trash2, FileText, UploadCloud, Image as ImageIcon, FileArchive, File as FileIcon } from "lucide-react";
+import { Download, Trash2, FileText, UploadCloud, Image as ImageIcon, FileArchive, File as FileIcon, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -37,40 +37,78 @@ export function FileManager({
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [deleting, setDeleting] = useState<StoredFile | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   const action = uploadFileAction.bind(null, projectId ?? null, taskId ?? null);
   const [state, formAction, pending] = useActionState<FileFormState, FormData>(action, {});
 
   useEffect(() => {
-    if (state && (state.data || state.error)) {
+    if (state.data) {
+      if (inputRef.current) inputRef.current.value = "";
       router.refresh();
     }
-  }, [state, router]);
+  }, [state.data, router]);
+
+  const visibleFiles = query.trim()
+    ? files.filter((f) => f.name.toLowerCase().includes(query.trim().toLowerCase()))
+    : files;
 
   async function download(file: StoredFile) {
+    setDownloadError(null);
     const res = await getSignedUrlAction(file.id);
-    if (res.url) window.open(res.url, "_blank", "noopener,noreferrer");
+    if (res.error || !res.url) {
+      setDownloadError(res.error ?? "Could not generate download link.");
+      return;
+    }
+    window.open(res.url, "_blank", "noopener,noreferrer");
   }
 
   return (
     <div className="flex flex-col gap-4">
-      {!readOnly ? (
-        <form action={formAction} className="flex items-end gap-2">
-          <div className="flex-1">
-            <Input
-              ref={inputRef}
-              type="file"
-              name="file"
-              aria-label="Choose a file to upload"
-              required
-              disabled={pending}
-            />
-            {state.error ? <p className="mt-1 text-sm text-destructive">{state.error}</p> : null}
-          </div>
-          <Button type="submit" disabled={pending}>
-            <UploadCloud /> {pending ? "Uploading…" : "Upload"}
-          </Button>
-        </form>
+      {state.error ? (
+        <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{state.error}</p>
+      ) : null}
+      {downloadError ? (
+        <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{downloadError}</p>
+      ) : null}
+      {deleteError ? (
+        <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{deleteError}</p>
+      ) : null}
+      {!readOnly || files.length > 0 ? (
+        <div className="flex flex-wrap items-end gap-2">
+          {!readOnly ? (
+            <form action={formAction} className="flex flex-1 items-end gap-2">
+              <div className="flex-1">
+                <Input
+                  ref={inputRef}
+                  type="file"
+                  name="file"
+                  aria-label="Choose a file to upload"
+                  required
+                  disabled={pending}
+                />
+                {state.error ? <p className="mt-1 text-sm text-destructive">{state.error}</p> : null}
+              </div>
+              <Button type="submit" disabled={pending}>
+                <UploadCloud /> {pending ? "Uploading…" : "Upload"}
+              </Button>
+            </form>
+          ) : null}
+          {files.length > 0 ? (
+            <div className="relative w-full sm:w-56">
+              <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search files…"
+                aria-label="Search files"
+                className="pl-8"
+              />
+            </div>
+          ) : null}
+        </div>
       ) : null}
 
       {files.length === 0 ? (
@@ -79,9 +117,15 @@ export function FileManager({
           title="No files"
           description="Files you upload here are stored securely in your private storage."
         />
+      ) : visibleFiles.length === 0 ? (
+        <EmptyState
+          icon={Search}
+          title="No matching files"
+          description={`No files match “${query.trim()}”.`}
+        />
       ) : (
         <ul className="flex flex-col overflow-hidden rounded-xl border bg-card">
-          {files.map((f) => (
+          {visibleFiles.map((f) => (
             <li
               key={f.id}
               className="group flex items-center gap-3 border-b border-border/50 px-4 py-3 last:border-0 hover:bg-accent/30"
@@ -117,7 +161,9 @@ export function FileManager({
         confirmLabel="Delete file"
         onConfirm={async () => {
           if (!deleting) return;
-          await deleteFileAction(deleting.id);
+          setDeleteError(null);
+          const res = await deleteFileAction(deleting.id);
+          if (res.error) setDeleteError(res.error);
           setDeleting(null);
           router.refresh();
         }}

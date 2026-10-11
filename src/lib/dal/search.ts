@@ -42,7 +42,7 @@ export const searchAll = cache(async (query: string): Promise<SearchResults> => 
         .limit(10),
       supabase
         .from("tasks")
-        .select("id, title, status, project_id, project!inner(id, name)")
+        .select("id, title, status, project_id, project:projects!inner(id, name)")
         .eq("user_id", user.id)
         .ilike("title", q)
         .limit(15),
@@ -60,7 +60,7 @@ export const searchAll = cache(async (query: string): Promise<SearchResults> => 
         .limit(10),
       supabase
         .from("daily_notes")
-        .select("id, note_date, content, project_id, project!inner(id, name)")
+        .select("id, note_date, content, project_id, project:projects!inner(id, name)")
         .eq("user_id", user.id)
         .ilike("content", q)
         .limit(10),
