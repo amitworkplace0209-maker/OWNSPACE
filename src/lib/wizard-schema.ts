@@ -27,6 +27,7 @@ const REQUIRED_COLUMNS: Array<{ table: string; column: string }> = [
   { table: "tasks", column: "node_id" },
   { table: "tasks", column: "start_date" },
   { table: "tasks", column: "estimated_minutes" },
+  { table: "milestones", column: "node_id" },
   { table: "checklists", column: "parent_checklist_id" },
   { table: "checklists", column: "due_date" },
   { table: "checklists", column: "priority" },

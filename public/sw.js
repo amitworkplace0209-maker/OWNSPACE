@@ -6,13 +6,15 @@
  *   page) are cached aggressively. They are content-addressed or version-stamped,
  *   so serving a stale copy cannot show the wrong data.
  * - Navigations are NEVER cached. Every authenticated HTML response contains the
- *   user's own data, and putting that in a shared Cache Storage bucket is how
- *   one account ends up seeing another's dashboard on a shared device. Offline
- *   navigations get the static /offline page instead.
+ *   user's own data, and putting that in a shared Cache Storage bucket is how one
+ *   account ends up seeing another's dashboard on a shared device. Offline
+ *   navigations get the static /offline page instead, and the app's own IndexedDB
+ *   snapshot — which is namespaced per user id — is what backs the offline /tasks
+ *   screen. See src/lib/offline/task-cache.client.ts.
  * - Nothing else is touched. API and Supabase traffic passes straight through.
  */
 
-const VERSION = "ownspece-v2";
+const VERSION = "ownspece-v3";
 const STATIC_CACHE = `${VERSION}-static`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 
@@ -103,6 +105,24 @@ function navigationHandler(request) {
     );
   });
 }
+
+/**
+ * Background Sync: flush queued task edits the moment the device is back on a
+ * network, rather than waiting for the tab to be open and focused.
+ *
+ * The queue itself lives in IndexedDB under `ownspece-offline`, written by the
+ * tasks workspace. The worker only signals, and the page does the actual
+ * replay — a service worker has no Supabase session and cannot call the
+ * Server Actions, so this deliberately does not try.
+ */
+self.addEventListener("sync", (event) => {
+  if (event.tag !== "ownspece-task-sync") return;
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      for (const client of list) client.postMessage({ type: "TASK_SYNC_REQUESTED" });
+    })
+  );
+});
 
 self.addEventListener("fetch", (event) => {
   const request = event.request;

@@ -437,9 +437,10 @@ export const getTaskStats = cache(
 
       const isLive = live.includes(task.status);
 
-      if (isLive) {
+      if (isLive) countable += 1;
+      if (task.status === "done") {
+        done += 1;
         countable += 1;
-        if (task.status === "done") done += 1;
       }
       if (task.status === "in_progress") inProgress += 1;
       if (isLive && task.due_date === today) dueToday += 1;

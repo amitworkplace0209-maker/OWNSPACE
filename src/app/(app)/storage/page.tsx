@@ -4,6 +4,7 @@ import {
   getBucketConfigs,
   getBucketUsage,
   getCategorizedFiles,
+  getStorageReport,
   getStorageStats,
   getUntrackedObjects,
   storageCategoryOrder,
@@ -41,6 +42,7 @@ export default async function StoragePage({
     untracked,
     driveStatus,
     driveUsage,
+    storageReport,
   ] = await Promise.all([
     getStorageStats(),
     getCategorizedFiles({ limit: 200, category: category ?? undefined }),
@@ -49,6 +51,7 @@ export default async function StoragePage({
     getUntrackedObjects(FILES_BUCKET),
     getGDriveStatus(),
     getDriveAccountUsage(),
+    getStorageReport(),
   ]);
 
   const bucketConfig = bucketConfigs.configs.find((entry) => entry.name === FILES_BUCKET) ?? null;
@@ -76,6 +79,7 @@ export default async function StoragePage({
         }}
         untracked={{ objects: untracked.objects, bytes: untracked.untrackedBytes, error: untracked.error }}
         bucketConfigError={bucketConfigs.error}
+        storageReport={storageReport}
         drive={{
           configured: driveStatus.configured,
           accounts: driveStatus.accounts,

@@ -190,7 +190,16 @@ export const noteSchema = z
 export const dailyNoteSchema = z.object({
   note_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Enter a valid date"),
   project_id: z.string().uuid("Select a project"),
+  title: optionalText(300),
   content: z.string().max(200_000),
+  // The structured blocks migration 017 added. The planner writes them; an
+  // omitted field stays untouched rather than being cleared, so a form that
+  // only posts `content` cannot wipe the sections the wizard filled in.
+  todays_work: optionalText(20_000),
+  completed_work: optionalText(20_000),
+  problems: optionalText(20_000),
+  ideas: optionalText(20_000),
+  next_steps: optionalText(20_000),
 });
 
 export const planningEntrySchema = z

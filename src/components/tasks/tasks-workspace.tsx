@@ -3,12 +3,15 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { useOffline } from "next/offline";
 import { toast } from "sonner";
 import {
   AlertTriangle,
+  CalendarClock,
   CheckCircle2,
   Circle,
   Eraser,
+  Flame,
   ListChecks,
   Pencil,
   Plus,
@@ -22,11 +25,20 @@ import { Progress } from "@/components/ui/progress";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { TaskFormDialog } from "@/components/tasks/task-form-dialog";
-import { PriorityBadge, TaskStatusBadge, taskStatusLabel } from "@/components/shared/badges";
+import { TasksSkeleton } from "@/components/tasks/tasks-skeleton";
+import { LiveIndicator, OfflineBanner } from "@/components/tasks/live-indicator";
+import {
+  PriorityBadge,
+  TaskStatusBadge,
+  taskStatusLabel,
+  priorityLabel,
+} from "@/components/shared/badges";
 import { StatStrip, StatStripFooter, type StatStripItem } from "@/components/shared/stat-strip";
 import { WorkspaceToolbar, VIEW_ICONS } from "@/components/shared/workspace-toolbar";
 import { formatDateShort, isOverdueDate } from "@/lib/format";
-import { deleteTaskAction, setTaskStatusAction } from "@/lib/actions/tasks";
+import { useTasksLive } from "@/hooks/use-tasks-live";
+import { useBakedTasks } from "@/hooks/use-baked-tasks";
+import { deleteTaskAction } from "@/lib/actions/tasks";
 import {
   bulkDeleteTasksAction,
   bulkSetTaskPriorityAction,
@@ -37,6 +49,7 @@ import { cn } from "cn";
 import type { Priority, Task, TaskStatus } from "@/types";
 import type { Project, ProjectPhase } from "@/types";
 import type { TaskStats, TaskWithTagNames } from "@/lib/dal/tasks";
+import type { CachedTask } from "@/lib/offline/task-cache";
 import { PRIORITIES, TASK_STATUSES } from "@/types";
 
 const GROUPINGS = [
@@ -46,14 +59,6 @@ const GROUPINGS = [
   { value: "due", label: "Due date" },
 ];
 
-const STATUS_TONE: Record<TaskStatus, string> = {
-  backlog: "bg-muted",
-  todo: "bg-info",
-  in_progress: "bg-primary",
-  done: "bg-success",
-  cancelled: "bg-muted-foreground",
-};
-
 const PRIORITY_RANK: Record<Priority, number> = {
   urgent: 0,
   high: 1,
@@ -62,7 +67,16 @@ const PRIORITY_RANK: Record<Priority, number> = {
   none: 4,
 };
 
-/** Live statuses — cancelled is not "open work". */
+/** Accent per column, so the board reads as five states rather than one grid. */
+const COLUMN_TINT: Record<TaskStatus, string> = {
+  backlog: "bg-muted-foreground/40",
+  todo: "bg-info/60",
+  in_progress: "bg-primary/70",
+  done: "bg-success/70",
+  cancelled: "bg-muted-foreground/30",
+};
+
+/** Live statuses â€” cancelled is not "open work". */
 const LIVE: TaskStatus[] = ["backlog", "todo", "in_progress"];
 
 export function TasksWorkspace({
@@ -77,6 +91,8 @@ export function TasksWorkspace({
   initialProjectId,
   showProjectColumn = true,
   readOnly = false,
+  userId = null,
+  openNew = false,
 }: {
   tasks: TaskWithTagNames[];
   stats: TaskStats;
@@ -90,27 +106,32 @@ export function TasksWorkspace({
   initialProjectId?: string;
   showProjectColumn?: boolean;
   readOnly?: boolean;
+  /** Namespaces the offline cache; null disables caching on scoped views. */
+  userId?: string | null;
+  /** The ?new=1 shortcut from the manifest and the dashboard. */
+  openNew?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const offline = useOffline();
 
-  const [newOpen, setNewOpen] = React.useState(false);
+  const [newOpen, setNewOpen] = React.useState(openNew);
   const [editing, setEditing] = React.useState<Task | null>(null);
   const [deleting, setDeleting] = React.useState<Task | null>(null);
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
-const [query, setQuery] = React.useState("");
+  const [query, setQuery] = React.useState("");
   const [groupBy, setGroupBy] = React.useState<string>("");
   const [view, setView] = React.useState<string>("list");
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [pending, startTransition] = React.useTransition();
 
   // View preference lives in localStorage so the choice survives a navigation.
-  // Read through the store rather than an effect, which would be a synchronous
-  // setState and trip the React Compiler lint rule.
+  // Read through a rAF-scheduled setState rather than synchronously in the
+  // initializer, which would disagree with the server render.
   React.useEffect(() => {
     const saved = window.localStorage.getItem("ownspece:tasks:view");
-    if (saved === "kanban" || saved === "list") {
+    if (saved === "board" || saved === "list") {
       const id = window.requestAnimationFrame(() => setView(saved));
       return () => window.cancelAnimationFrame(id);
     }
@@ -128,15 +149,34 @@ const [query, setQuery] = React.useState("");
     router.push(`${pathname}?${params.toString()}`);
   }
 
-  const status = initialStatus === "all" ? "" : initialStatus;
+  const baked = useBakedTasks(userId);
+
+// `TaskWithTagNames` is structurally a `CachedTask` â€” the offline type exists
+  // so the cache layer does not have to import the server-only DAL â€” so the
+  // rows pass straight through.
+  const serverTasks = tasks;
+
+  const { status, liveTasks, queuedCount, update, syncNow } = useTasksLive({
+    userId,
+    tasks: serverTasks,
+    enabled: !readOnly,
+  });
+
+  // Offline, the baked snapshot is the source of truth: the RSC payload for
+  // this route may never arrive, and showing yesterday's rows beats an empty
+  // page. Online, the server wins and the cache is just the fallback.
+  const useBaked = offline && baked.tasks.length > 0;
+  const source = useBaked ? baked.tasks : liveTasks;
+
+  const status_ = initialStatus === "all" ? "" : initialStatus;
   const priority = initialPriority && initialPriority !== "all" ? initialPriority : "";
 
   const filtered = React.useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
     const needle = query.trim().toLowerCase();
 
-    return tasks.filter((task) => {
-      if (status && task.status !== status) return false;
+    return source.filter((task) => {
+      if (status_ && task.status !== status_) return false;
       if (priority && task.priority !== priority) return false;
 
       if (initialDue === "overdue") {
@@ -152,7 +192,7 @@ const [query, setQuery] = React.useState("");
 
       if (initialProjectId && task.project_id !== initialProjectId) return false;
 
-      // Search reaches tags and project name too — the title alone is rarely
+      // Search reaches tags and project name too â€” the title alone is rarely
       // enough once you have more than a handful of projects.
       if (needle) {
         const haystack = [
@@ -167,9 +207,9 @@ const [query, setQuery] = React.useState("");
       }
       return true;
     });
-  }, [tasks, status, priority, initialDue, initialProjectId, query]);
+  }, [source, status_, priority, initialDue, initialProjectId, query]);
 
-// Selection is *derived*, not stored: anything no longer visible is simply
+  // Selection is *derived*, not stored: anything no longer visible is simply
   // absent from the effective set. Pruning it with an effect instead would be a
   // synchronous setState, and it would still leave one render where a bulk
   // action could target a task that is no longer on screen.
@@ -182,14 +222,12 @@ const [query, setQuery] = React.useState("");
 
   function toggleComplete(task: Task) {
     if (readOnly) return;
-    void setTaskStatusAction(task.id, task.status === "done" ? "todo" : "done").then(
-      () => router.refresh()
-    );
+    void update(task.id, "status", task.status === "done" ? "todo" : "done");
   }
 
   function moveStatus(task: Task, next: string) {
     if (readOnly) return;
-    void setTaskStatusAction(task.id, next).then(() => router.refresh());
+    void update(task.id, "status", next);
   }
 
   function toggleSelected(id: string) {
@@ -258,7 +296,7 @@ const [query, setQuery] = React.useState("");
       id: "dueToday",
       label: "Due today",
       value: stats.dueToday,
-      icon: CheckCircle2,
+      icon: CalendarClock,
       tone: "info",
       href: "/tasks?due=today",
       hint: stats.dueToday > 0 ? "Plan these first" : "Nothing due",
@@ -276,7 +314,7 @@ const [query, setQuery] = React.useState("");
       id: "inProgress",
       label: "In progress",
       value: stats.inProgress,
-      icon: Circle,
+      icon: Flame,
       tone: "warning",
       href: "/tasks?status=in_progress",
       hint: `${stats.unassignedDue} due with no project`,
@@ -296,14 +334,30 @@ const [query, setQuery] = React.useState("");
       ? "dueToday"
       : initialDue === "overdue"
         ? "overdue"
-        : status === "in_progress"
+        : status_ === "in_progress"
           ? "inProgress"
-          : !status && !initialDue && !priority
+          : !status_ && !initialDue && !priority
             ? "all"
             : undefined;
 
   return (
     <div className="flex flex-col gap-4">
+      {!readOnly ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <OfflineBanner
+          queuedCount={queuedCount}
+          cachedAt={useBaked ? baked.cachedAt : null}
+          onSync={syncNow}
+        />
+          <LiveIndicator
+            status={status}
+            queuedCount={queuedCount}
+            onSync={syncNow}
+            className={offline ? "" : "ml-auto"}
+          />
+        </div>
+      ) : null}
+
       <StatStrip items={statItems} activeId={activeTile} />
 
       <StatStripFooter
@@ -319,7 +373,7 @@ const [query, setQuery] = React.useState("");
           {
             param: "status",
             label: "Status",
-            value: status,
+            value: status_,
             options: [
               { value: "", label: "All statuses" },
               ...TASK_STATUSES.map((value) => ({
@@ -375,7 +429,7 @@ const [query, setQuery] = React.useState("");
         search={{
           value: query,
           onChange: setQuery,
-          placeholder: "Search tasks, tags, projects…",
+          placeholder: "Search tasks, tags, projectsâ€¦",
           label: "Search tasks",
         }}
         grouping={{ value: groupBy, onChange: setGroupBy, options: GROUPINGS }}
@@ -384,7 +438,7 @@ const [query, setQuery] = React.useState("");
           onChange: changeView,
           options: [
             { value: "list", label: "List", icon: VIEW_ICONS.list },
-            { value: "kanban", label: "Board", icon: VIEW_ICONS.kanban },
+            { value: "board", label: "Board", icon: VIEW_ICONS.kanban },
           ],
         }}
         actions={
@@ -427,7 +481,9 @@ const [query, setQuery] = React.useState("");
         />
       ) : null}
 
-      {tasks.length === 0 ? (
+      {source.length === 0 && baked.reading ? (
+        <TasksSkeleton />
+      ) : source.length === 0 ? (
         <EmptyState
           icon={Plus}
           title={readOnly ? "No tasks in this project" : "No tasks yet"}
@@ -461,7 +517,7 @@ const [query, setQuery] = React.useState("");
             </Button>
           }
         />
-      ) : view === "kanban" ? (
+      ) : view === "board" ? (
         <KanbanView
           columns={columns}
           readOnly={readOnly}
@@ -558,9 +614,9 @@ function BulkBar({
   onClear: () => void;
 }) {
   return (
-    <div className="sticky top-16 z-20 flex flex-wrap items-center gap-2 rounded-xl border bg-card/95 p-2 shadow-lg backdrop-blur">
+    <div className="animate-slide-up sticky top-16 z-20 flex flex-wrap items-center gap-2 rounded-xl border bg-card/95 p-2 shadow-lg backdrop-blur">
       <span className="flex items-center gap-2 px-1 text-sm font-medium">
-        {count} selected
+        <span className="count-pop inline-block tabular-nums">{count}</span> selected
       </span>
 
       <div className="h-4 w-px bg-border" />
@@ -578,9 +634,9 @@ function BulkBar({
           onStatus(event.target.value);
           event.target.value = "";
         }}
-        className="h-7 rounded-md border border-input bg-transparent px-2 text-xs outline-none dark:bg-input/30"
+        className="h-7 rounded-md border border-input bg-transparent px-2 text-xs outline-none disabled:opacity-60 dark:bg-input/30"
       >
-        <option value="">Set status…</option>
+        <option value="">Set statusâ€¦</option>
         {TASK_STATUSES.map((value) => (
           <option key={value} value={value}>
             {taskStatusLabel[value]}
@@ -597,12 +653,12 @@ function BulkBar({
           onPriority(event.target.value);
           event.target.value = "";
         }}
-        className="h-7 rounded-md border border-input bg-transparent px-2 text-xs outline-none dark:bg-input/30"
+        className="h-7 rounded-md border border-input bg-transparent px-2 text-xs outline-none disabled:opacity-60 dark:bg-input/30"
       >
-        <option value="">Set priority…</option>
+        <option value="">Set priorityâ€¦</option>
         {PRIORITIES.map((value) => (
           <option key={value} value={value}>
-            {value === "urgent" ? "Critical" : value}
+            {priorityLabel[value]}
           </option>
         ))}
       </select>
@@ -623,7 +679,7 @@ function BulkBar({
 // List view
 // ---------------------------------------------------------------------------
 
-type Group = { id: string; label: string; tasks: TaskWithTagNames[] };
+type Group = { id: string; label: string; tasks: CachedTask[] };
 
 function ListView({
   tasks,
@@ -638,7 +694,7 @@ function ListView({
   showProjectColumn,
   subtaskProgress,
 }: {
-  tasks: TaskWithTagNames[];
+  tasks: CachedTask[];
   grouped: string;
   readOnly: boolean;
   selected: Set<string>;
@@ -664,14 +720,16 @@ function ListView({
               <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">
                 {group.tasks.length}
               </span>
+              <span className="h-px flex-1 bg-border/60" />
             </header>
           ) : null}
 
           <ul className="flex flex-col overflow-hidden rounded-xl border bg-card">
-            {group.tasks.map((task) => (
+            {group.tasks.map((task, index) => (
               <TaskRow
                 key={task.id}
                 task={task}
+                index={index}
                 readOnly={readOnly}
                 checked={selected.has(task.id)}
                 onToggleSelected={onToggleSelected}
@@ -690,7 +748,7 @@ function ListView({
   );
 }
 
-function groupTasks(tasks: TaskWithTagNames[], grouped: string): Group[] {
+function groupTasks(tasks: CachedTask[], grouped: string): Group[] {
   if (!grouped) return [{ id: "all", label: "All tasks", tasks }];
 
   const buckets = new Map<string, Group>();
@@ -728,7 +786,7 @@ function groupTasks(tasks: TaskWithTagNames[], grouped: string): Group[] {
     }
   }
 
-  // Overdue first, then today, then everything else — the reading order that
+  // Overdue first, then today, then everything else â€” the reading order that
   // matches how someone actually works through a list.
   const order = ["overdue", "today", "later", "none"];
   return [...buckets.values()].sort((a, b) => {
@@ -740,6 +798,7 @@ function groupTasks(tasks: TaskWithTagNames[], grouped: string): Group[] {
 
 function TaskRow({
   task,
+  index,
   readOnly,
   checked,
   onToggleSelected,
@@ -750,7 +809,8 @@ function TaskRow({
   showProjectColumn,
   subtask,
 }: {
-  task: TaskWithTagNames;
+  task: CachedTask;
+  index: number;
   readOnly: boolean;
   checked: boolean;
   onToggleSelected: (id: string) => void;
@@ -767,11 +827,15 @@ function TaskRow({
 
   return (
     <li
+      // The stagger is capped so a long list does not leave the last rows
+      // arriving seconds after the first.
+      style={{ "--i": Math.min(index, 12) } as React.CSSProperties}
       className={cn(
-        "group flex items-center gap-3 border-b border-border/50 px-3 py-2.5 transition last:border-0",
+        "row-stagger group relative flex items-center gap-3 border-b border-border/50 px-3 py-2.5 transition-colors last:border-0",
         "hover:bg-accent/30",
         done && "opacity-60",
-        cancelled && "opacity-45"
+        cancelled && "opacity-45",
+        task.pending && "task-pending"
       )}
     >
       {!readOnly ? (
@@ -785,7 +849,12 @@ function TaskRow({
 
       <span
         aria-hidden="true"
-        className={cn("size-1.5 shrink-0 rounded-full", STATUS_TONE[task.status])}
+        className={cn(
+          "absolute inset-y-0 left-0 w-0.5 opacity-0 transition-opacity",
+          "group-hover:opacity-100",
+          task.pending && "opacity-100"
+        )}
+        style={{ backgroundColor: task.pending ? "var(--primary)" : "transparent" }}
       />
 
       <button
@@ -793,10 +862,10 @@ function TaskRow({
         onClick={() => onToggle(task)}
         disabled={readOnly}
         aria-label={done ? `Mark "${task.title}" as not done` : `Mark "${task.title}" as done`}
-        className="shrink-0 text-muted-foreground transition hover:text-primary disabled:cursor-default disabled:opacity-60 disabled:hover:text-muted-foreground"
+        className="relative shrink-0 rounded-full text-muted-foreground transition hover:scale-110 hover:text-primary disabled:cursor-default disabled:opacity-60 disabled:hover:scale-100 disabled:hover:text-muted-foreground"
       >
         {done ? (
-          <CheckCircle2 className="size-5 text-success" />
+          <CheckCircle2 className="check-ring size-5 text-success" />
         ) : (
           <Circle className="size-5" />
         )}
@@ -804,12 +873,7 @@ function TaskRow({
 
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <Link href={`/tasks/${task.id}`} className="truncate">
-          <p
-            className={cn(
-              "truncate text-sm",
-              done && "text-muted-foreground line-through"
-            )}
-          >
+          <p className={cn("truncate text-sm", done && "text-muted-foreground line-through")}>
             {task.title}
           </p>
         </Link>
@@ -838,6 +902,9 @@ function TaskRow({
                 ? `${Math.round((task.estimated_minutes / 60) * 10) / 10}h`
                 : `${task.estimated_minutes}m`}
             </span>
+          ) : null}
+          {task.pending ? (
+            <span className="text-[11px] text-primary">Savingâ€¦</span>
           ) : null}
         </div>
 
@@ -906,7 +973,7 @@ function TaskRow({
 }
 
 // ---------------------------------------------------------------------------
-// Kanban view
+// Board view
 // ---------------------------------------------------------------------------
 
 function KanbanView({
@@ -920,7 +987,7 @@ function KanbanView({
   onToggleSelected,
   onEdit,
 }: {
-  columns: Array<{ status: TaskStatus; label: string; tasks: TaskWithTagNames[] }>;
+  columns: Array<{ status: TaskStatus; label: string; tasks: CachedTask[] }>;
   readOnly: boolean;
   onToggle: (task: Task) => void;
   onMove: (task: Task, status: string) => void;
@@ -930,156 +997,198 @@ function KanbanView({
   onToggleSelected: (id: string) => void;
   onEdit: (task: Task) => void;
 }) {
+  const [active, setActive] = React.useState<TaskStatus | null>(null);
+
   return (
-    <div className="-mx-4 flex gap-4 overflow-x-auto px-4 pb-2 md:mx-0 md:px-0">
-      {columns.map((column) => (
-        <section
-          key={column.status}
-          className="flex w-72 shrink-0 flex-col gap-2 rounded-xl border bg-card/60 p-2"
-        >
-          <header className="flex items-center justify-between gap-2 px-1 py-1">
-            <span className="flex items-center gap-1.5 text-sm font-medium">
-              <span
-                aria-hidden="true"
-                className={cn("size-2 rounded-full", STATUS_TONE[column.status])}
-              />
-              {column.label}
-            </span>
-            <span className="rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
-              {column.tasks.length}
-            </span>
-          </header>
+    <div className="-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 md:mx-0 md:px-0">
+      {columns.map((column) => {
+        const isActive = active === column.status;
 
-          <div className="flex flex-col gap-2">
-            {column.tasks.length === 0 ? (
-              <p className="rounded-lg border border-dashed px-2 py-6 text-center text-xs text-muted-foreground">
-                Nothing here
-              </p>
-            ) : (
-              column.tasks.map((task) => {
-                const overdue = isOverdueDate(task.due_date) && LIVE.includes(task.status);
-                const done = task.status === "done";
-                const subtask = subtaskProgress[task.id];
-
-                return (
-                  <article
-                    key={task.id}
-                    className={cn(
-                      "group/card flex flex-col gap-2 rounded-lg border bg-card p-3 transition",
-                      "hover:border-primary/40 hover:shadow-md",
-                      done && "opacity-60"
-                    )}
-                  >
-                    <div className="flex items-start gap-2">
-                      {!readOnly ? (
-                        <Checkbox
-                          checked={selected.has(task.id)}
-                          onCheckedChange={() => onToggleSelected(task.id)}
-                          aria-label={`Select ${task.title}`}
-                          className="mt-0.5 shrink-0 opacity-0 transition group-hover/card:opacity-100 focus-visible:opacity-100 data-[checked]:opacity-100"
-                        />
-                      ) : null}
-                      <Link href={`/tasks/${task.id}`} className="min-w-0 flex-1">
-                        <p
-                          className={cn(
-                            "text-sm font-medium hover:underline",
-                            done && "text-muted-foreground line-through"
-                          )}
-                        >
-                          {task.title}
-                        </p>
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => onToggle(task)}
-                        disabled={readOnly}
-                        aria-label={
-                          done ? `Mark "${task.title}" as not done` : `Mark "${task.title}" as done`
-                        }
-                        className="shrink-0 text-muted-foreground transition hover:text-primary disabled:opacity-60"
-                      >
-                        {done ? (
-                          <CheckCircle2 className="size-4 text-success" />
-                        ) : (
-                          <Circle className="size-4" />
-                        )}
-                      </button>
-                    </div>
-
-                    {showProjectColumn && task.project_name ? (
-                      <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-                        <span
-                          aria-hidden="true"
-                          className="size-2 shrink-0 rounded-full"
-                          style={{
-                            backgroundColor: task.project_color ?? "var(--primary)",
-                          }}
-                        />
-                        <span className="truncate">{task.project_name}</span>
-                      </span>
-                    ) : null}
-
-                    {subtask && subtask.total > 0 ? (
-                      <div className="flex items-center gap-2">
-                        <Progress
-                          value={Math.round((subtask.done / subtask.total) * 100)}
-                          className="h-1"
-                        />
-                        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                          {subtask.done}/{subtask.total}
-                        </span>
-                      </div>
-                    ) : null}
-
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <PriorityBadge priority={task.priority} />
-                      {task.due_date ? (
-                        <span
-                          className={cn(
-                            "rounded-md px-1.5 py-0.5 text-[11px]",
-                            overdue
-                              ? "bg-danger/12 font-medium text-danger"
-                              : "bg-muted text-muted-foreground"
-                          )}
-                        >
-                          {formatDateShort(task.due_date)}
-                        </span>
-                      ) : null}
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      {!readOnly ? (
-                        <>
-                          <select
-                            value={task.status}
-                            onChange={(event) => onMove(task, event.target.value)}
-                            aria-label={`Move "${task.title}"`}
-                            className="h-7 min-w-0 flex-1 rounded-md border border-input bg-transparent px-1.5 text-xs outline-none dark:bg-input/30"
-                          >
-                            {TASK_STATUSES.map((value) => (
-                              <option key={value} value={value}>
-                                {taskStatusLabel[value]}
-                              </option>
-                            ))}
-                          </select>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`Edit "${task.title}"`}
-                            onClick={() => onEdit(task)}
-                          >
-                            <Pencil className="size-4" />
-                          </Button>
-                        </>
-                      ) : null}
-                    </div>
-                  </article>
-                );
-              })
+        return (
+          <section
+            key={column.status}
+            data-active={isActive}
+            onMouseEnter={() => setActive(column.status)}
+            onMouseLeave={() => setActive((current) => (current === column.status ? null : current))}
+            className={cn(
+              "column-sweep relative flex w-72 shrink-0 snap-start flex-col gap-2 rounded-xl border bg-card/60 p-2 transition-colors",
+              isActive && "border-primary/40 bg-card"
             )}
-          </div>
-        </section>
-      ))}
+          >
+            <header className="flex items-center justify-between gap-2 px-1 py-1">
+              <span className="flex items-center gap-1.5 text-sm font-medium">
+                <span
+                  aria-hidden="true"
+                  className={cn("size-2 rounded-full", COLUMN_TINT[column.status])}
+                />
+                {column.label}
+              </span>
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
+                {column.tasks.length}
+              </span>
+            </header>
+
+            <div className="flex flex-col gap-2">
+              {column.tasks.length === 0 ? (
+                <p className="rounded-lg border border-dashed px-2 py-6 text-center text-xs text-muted-foreground">
+                  Nothing here
+                </p>
+              ) : (
+                column.tasks.map((task, index) => (
+                  <BoardCard
+                    key={task.id}
+                    task={task}
+                    index={index}
+                    readOnly={readOnly}
+                    selected={selected.has(task.id)}
+                    onToggleSelected={onToggleSelected}
+                    onToggle={onToggle}
+                    onMove={onMove}
+                    onEdit={onEdit}
+                    showProjectColumn={showProjectColumn}
+                    subtask={subtaskProgress[task.id]}
+                  />
+                ))
+              )}
+            </div>
+          </section>
+        );
+      })}
     </div>
+  );
+}
+
+function BoardCard({
+  task,
+  index,
+  readOnly,
+  selected,
+  onToggleSelected,
+  onToggle,
+  onMove,
+  onEdit,
+  showProjectColumn,
+  subtask,
+}: {
+  task: CachedTask;
+  index: number;
+  readOnly: boolean;
+  selected: boolean;
+  onToggleSelected: (id: string) => void;
+  onToggle: (task: Task) => void;
+  onMove: (task: Task, status: string) => void;
+  onEdit: (task: Task) => void;
+  showProjectColumn: boolean;
+  subtask?: { total: number; done: number };
+}) {
+  const done = task.status === "done";
+  const overdue = isOverdueDate(task.due_date) && LIVE.includes(task.status);
+
+  return (
+    <article
+      style={{ "--i": Math.min(index, 10) } as React.CSSProperties}
+      className={cn(
+        "row-stagger group/card relative flex flex-col gap-2 rounded-lg border bg-card p-3 transition",
+        "hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md",
+        done && "opacity-60",
+        task.pending && "task-pending"
+      )}
+    >
+      <div className="flex items-start gap-2">
+        {!readOnly ? (
+          <Checkbox
+            checked={selected}
+            onCheckedChange={() => onToggleSelected(task.id)}
+            aria-label={`Select ${task.title}`}
+            className="mt-0.5 shrink-0 opacity-0 transition group-hover/card:opacity-100 focus-visible:opacity-100 data-[checked]:opacity-100"
+          />
+        ) : null}
+        <Link href={`/tasks/${task.id}`} className="min-w-0 flex-1">
+          <p
+            className={cn(
+              "text-sm font-medium hover:underline",
+              done && "text-muted-foreground line-through"
+            )}
+          >
+            {task.title}
+          </p>
+        </Link>
+        <button
+          type="button"
+          onClick={() => onToggle(task)}
+          disabled={readOnly}
+          aria-label={done ? `Mark "${task.title}" as not done` : `Mark "${task.title}" as done`}
+          className="shrink-0 rounded-full text-muted-foreground transition hover:scale-110 hover:text-primary disabled:opacity-60"
+        >
+          {done ? (
+            <CheckCircle2 className="check-ring size-4 text-success" />
+          ) : (
+            <Circle className="size-4" />
+          )}
+        </button>
+      </div>
+
+      {showProjectColumn && task.project_name ? (
+        <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+          <span
+            aria-hidden="true"
+            className="size-2 shrink-0 rounded-full"
+            style={{ backgroundColor: task.project_color ?? "var(--primary)" }}
+          />
+          <span className="truncate">{task.project_name}</span>
+        </span>
+      ) : null}
+
+      {subtask && subtask.total > 0 ? (
+        <div className="flex items-center gap-2">
+          <Progress value={Math.round((subtask.done / subtask.total) * 100)} className="h-1" />
+          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+            {subtask.done}/{subtask.total}
+          </span>
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        <PriorityBadge priority={task.priority} />
+        {task.due_date ? (
+          <span
+            className={cn(
+              "rounded-md px-1.5 py-0.5 text-[11px]",
+              overdue
+                ? "bg-danger/12 font-medium text-danger"
+                : "bg-muted text-muted-foreground"
+            )}
+          >
+            {formatDateShort(task.due_date)}
+          </span>
+        ) : null}
+        {task.pending ? <span className="text-[11px] text-primary">Savingâ€¦</span> : null}
+      </div>
+
+      {!readOnly ? (
+        <div className="flex items-center gap-1">
+          <select
+            value={task.status}
+            onChange={(event) => onMove(task, event.target.value)}
+            aria-label={`Move "${task.title}"`}
+            className="h-7 min-w-0 flex-1 rounded-md border border-input bg-transparent px-1.5 text-xs outline-none dark:bg-input/30"
+          >
+            {TASK_STATUSES.map((value) => (
+              <option key={value} value={value}>
+                {taskStatusLabel[value]}
+              </option>
+            ))}
+          </select>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Edit "${task.title}"`}
+            onClick={() => onEdit(task)}
+          >
+            <Pencil className="size-4" />
+          </Button>
+        </div>
+      ) : null}
+    </article>
   );
 }

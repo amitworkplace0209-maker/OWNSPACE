@@ -48,7 +48,7 @@ export async function StorageOverview() {
           description="Upload files from any project or task."
           className="py-8"
           action={
-            <Button render={<Link href="/files" />}>
+            <Button render={<Link href="/resources" />}>
               <Plus /> Upload file
             </Button>
           }

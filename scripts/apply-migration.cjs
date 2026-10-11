@@ -88,6 +88,17 @@ const PROBES = {
   "021_recurring_reminder_dedupe.sql": `select 1 from information_schema.columns
                                          where table_schema='public' and table_name='finance_recurring'
                                            and column_name='last_reminded_for'`,
+"022_wizard_backend_fixes.sql": `select 1 from information_schema.columns
+                                     where table_schema='public' and table_name='milestones'
+                                       and column_name='node_id'`,
+  // Probes for something the migration *creates*, never for something it
+  // removes: `isApplied` returns true when rows come back, so probing the
+  // dropped `files_scope` constraint would report the migration as already run
+  // and skip it forever.
+  "023_workspace_resources.sql": `select 1 from pg_constraint where conname='project_resources_needs_target'`,
+  "024_daily_journal_realtime.sql": `select 1 from pg_publication_tables
+                                      where pubname='supabase_realtime'
+                                        and tablename='planning_entries'`,
 };
 
 async function isApplied(client, file) {

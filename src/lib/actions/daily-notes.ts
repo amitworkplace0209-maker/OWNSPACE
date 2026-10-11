@@ -7,6 +7,15 @@ import { dailyNoteSchema, planningEntrySchema, parseForm } from "@/lib/schemas";
 
 export type DailyNoteFormState = { error?: string };
 
+/** The structured blocks migration 017 added, in the order the form shows them. */
+const SECTION_KEYS = [
+  "todays_work",
+  "completed_work",
+  "problems",
+  "ideas",
+  "next_steps",
+] as const;
+
 export async function saveDailyNoteAction(
   _prevState: DailyNoteFormState,
   formData: FormData
@@ -26,15 +35,24 @@ export async function saveDailyNoteAction(
     .maybeSingle();
   if (!project) return { error: "Project not found." };
 
-  const { error } = await supabase.from("daily_notes").upsert(
-    {
-      ...parsed.data,
-      user_id: user.id,
-    },
-    { onConflict: "user_id,project_id,note_date" }
-  );
+  // Only the fields the form actually posted are written. A blank optional
+  // field is sent as "" by an input, which is not the same as "leave it alone"
+  // — and clearing a section the wizard filled in should be possible, while
+  // clearing one because a field was never rendered should not be.
+  const row: Record<string, unknown> = {
+    ...parsed.data,
+    user_id: user.id,
+  };
+  for (const key of SECTION_KEYS) {
+    if (!formData.has(key)) delete row[key];
+  }
+
+  const { error } = await supabase
+    .from("daily_notes")
+    .upsert(row, { onConflict: "user_id,project_id,note_date" });
   if (error) return { error: friendlyError(error, "Could not save the daily note.") };
 
+  revalidatePath("/daily");
   revalidatePath("/notes");
   revalidatePath("/dashboard");
   revalidatePath(`/projects/${parsed.data.project_id}`);
@@ -61,6 +79,7 @@ export async function deleteDailyNoteAction(projectId: string, date: string): Pr
     .eq("note_date", date);
   if (error) return { error: friendlyError(error, "Could not delete the daily note.") };
 
+  revalidatePath("/daily");
   revalidatePath("/notes");
   revalidatePath("/dashboard");
   return {};
@@ -84,6 +103,7 @@ export async function createPlanningEntryAction(
     .single();
   if (error || !data) return { error: friendlyError(error, "Could not add the planning entry.") };
 
+  revalidatePath("/daily");
   revalidatePath("/notes");
   revalidatePath(`/projects/${parsed.data.project_id}`);
   return { data: { id: data.id } };
@@ -137,6 +157,7 @@ export async function deletePlanningEntryAction(entryId: string): Promise<{ erro
     .eq("id", entryId);
   if (error) return { error: friendlyError(error, "Could not delete the planning entry.") };
 
+  revalidatePath("/daily");
   revalidatePath("/notes");
   revalidatePath(`/projects/${existing.project_id}`);
   return {};

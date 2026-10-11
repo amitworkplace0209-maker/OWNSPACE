@@ -25,7 +25,9 @@ function requireFormValue(formData: FormData, name: string): string {
 /** Best-effort origin of the current request, used for Supabase redirects. */
 async function getSiteUrl(): Promise<string> {
   const headerStore = await headers();
-  const proto = headerStore.get("x-forwarded-proto") ?? process.env.NODE_ENV === "development" ? "http" : "https";
+  const proto =
+    headerStore.get("x-forwarded-proto") ??
+    (process.env.NODE_ENV === "development" ? "http" : "https");
   const host = headerStore.get("x-forwarded-host") ?? headerStore.get("host") ?? "localhost:3000";
   return `${proto}://${host}`;
 }
@@ -218,6 +220,16 @@ export async function signUpAction(
 
 export async function signOutAction(): Promise<void> {
   const supabase = await createClient();
+
+  // The offline task cache lives on the device, not on the server, so signing
+  // out has to delete it explicitly — otherwise a shared machine would open
+  // the next person's session onto the previous one's task titles.
+  const { data } = await supabase.auth.getUser();
+  if (data.user) {
+    const { clearTaskCache } = await import("@/lib/offline/task-cache.client");
+    await clearTaskCache(data.user.id);
+  }
+
   await supabase.auth.signOut();
   redirect("/login");
 }

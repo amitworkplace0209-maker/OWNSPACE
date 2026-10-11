@@ -128,7 +128,7 @@ export async function deleteFinanceTransactionAction(transactionId: string): Pro
  * /finance left the other two showing a balance that no longer existed.
  */
 function revalidateFinancePaths(): void {
-  revalidateFinancePaths();
+  revalidatePath("/finance");
   revalidatePath("/lab");
   revalidatePath("/dashboard");
   revalidatePath("/analytics");

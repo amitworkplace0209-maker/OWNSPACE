@@ -369,6 +369,7 @@ export type Milestone = {
   user_id: string;
   project_id: string;
   phase_id: string | null;
+  node_id: string | null;
   title: string;
   description: string | null;
   due_date: string | null;

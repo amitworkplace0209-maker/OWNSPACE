@@ -11,7 +11,7 @@ import { cn } from "cn";
  * command palette all read from the same place.
  */
 const tabs = [
-  { label: "Overview", href: "" },
+  { label: "Profile", href: "" },
   { label: "Structure", href: "/structure" },
   { label: "Tasks", href: "/tasks" },
   { label: "Checklist", href: "/checklist" },

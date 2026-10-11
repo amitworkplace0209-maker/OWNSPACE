@@ -22,7 +22,7 @@ import { StatStrip, type StatStripItem } from "@/components/shared/stat-strip";
 import { WorkspaceToolbar, VIEW_ICONS } from "@/components/shared/workspace-toolbar";
 import { EmptyState } from "@/components/shared/empty-state";
 import { categoryColors, categoryIcons } from "@/lib/storage-categories";
-import type { StorageStats } from "@/lib/dal/storage";
+import type { StorageReport, StorageStats } from "@/lib/dal/storage";
 import type { StorageObjectRow } from "@/lib/dal/storage";
 import {
   bucketHealth,
@@ -74,6 +74,7 @@ export function StorageWorkspace({
   bucket,
   untracked,
   bucketConfigError,
+  storageReport,
   drive,
 }: {
   stats: StorageStats;
@@ -83,6 +84,7 @@ export function StorageWorkspace({
   bucket: BucketInfo;
   untracked: { objects: StorageObjectRow[]; bytes: number; error: string | null };
   bucketConfigError: string | null;
+  storageReport?: StorageReport;
   drive: {
     configured: boolean;
     accounts: GDriveConnection[];
@@ -213,7 +215,7 @@ export function StorageWorkspace({
             value: source,
             options: [
               { value: "all", label: "Both" },
-              { value: "supabase", label: "App storage", count: stats.fileCount },
+              { value: "supabase", label: "Supabase", count: stats.fileCount },
               { value: "drive", label: "Google Drive", count: drive.usage.totalLinkedCount },
             ],
           },
@@ -247,7 +249,7 @@ export function StorageWorkspace({
           ],
         }}
         actions={
-          <Link href="/files">
+          <Link href="/resources">
             <Button variant="outline" size="sm">
               <FolderOpen /> Manage files
             </Button>
@@ -262,7 +264,7 @@ export function StorageWorkspace({
         <section className="flex flex-col gap-3">
           <SectionHeading
             icon={Database}
-            title="App storage"
+            title="Supabase"
             subtitle="Files uploaded to Supabase Storage"
             badge={`${stats.fileCount} files`}
           />
@@ -270,11 +272,11 @@ export function StorageWorkspace({
           <div className="grid gap-3 lg:grid-cols-3">
             <article className="flex flex-col gap-2 rounded-xl border bg-card p-3.5 lg:col-span-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-sm font-medium">{formatFileSize(stats.usedBytes)} used</h3>
-                <span className={cn("text-xs font-medium", HEALTH_TONE[health])}>
-                  {health === "unknown" ? "No total quota reported" : health}
-                </span>
-              </div>
+              <h3 className="text-sm font-medium">{formatFileSize(stats.usedBytes)} used (tracked)</h3>
+              <span className={cn("text-xs font-medium", HEALTH_TONE[health])}>
+                {health === "unknown" ? "No account-level quota reported" : health}
+              </span>
+            </div>
 
               {stats.byCategory.length > 0 ? (
                 <>
@@ -332,16 +334,27 @@ export function StorageWorkspace({
 
             <article className="flex flex-col gap-2 rounded-xl border bg-card p-3.5">
               <h3 className="flex items-center gap-2 text-sm font-medium">
-                <HardDrive className="size-4" /> Bucket
+                <Database className="size-4" /> Database &amp; storage
               </h3>
               <dl className="flex flex-col gap-1.5 text-xs">
+                <Row label="Database (Postgres)">
+                  {storageReport?.databaseBytes !== null && storageReport?.databaseBytes !== undefined
+                    ? formatFileSize(storageReport.databaseBytes)
+                    : "Unavailable"}
+                </Row>
+                <Row label="Storage (total)">
+                  {storageReport ? formatFileSize(storageReport.storageBytes) : "Unavailable"}
+                </Row>
+                <Row label="Storage objects (total)">
+                  {storageReport ? storageReport.storageObjects : "—"}
+                </Row>
                 <Row label="Name">{bucket.name}</Row>
                 <Row label="Visibility">{bucket.public ? "Public" : "Private"}</Row>
-                <Row label="Stored">
+                <Row label="Stored (bucket)">
                   {bucket.unavailable ? (
                     <span className="text-warning">Could not read</span>
                   ) : (
-                    `${bucket.storedBytes === 1 ? "" : ""}${formatFileSize(bucket.storedBytes)} · ${bucket.storedCount} objects`
+                    `${formatFileSize(bucket.storedBytes)} · ${bucket.storedCount} objects`
                   )}
                 </Row>
                 <Row label="Largest object">
@@ -352,8 +365,11 @@ export function StorageWorkspace({
                     ? formatFileSize(bucket.fileSizeLimitBytes)
                     : "Not set"}
                 </Row>
-                <Row label="MIME types">
+                <Row label="Allowed MIME types">
                   {bucket.allowedMimeTypes?.length ? bucket.allowedMimeTypes.join(", ") : "Any"}
+                </Row>
+                <Row label="Bucket report">
+                  {storageReport?.error ? "Unavailable (RPC error)" : storageReport?.buckets && storageReport.buckets.length > 0 ? storageReport.buckets.map(b => `${b.bucket}:${formatFileSize(b.bytes)}`).join(", ") : "—"}
                 </Row>
               </dl>
 
@@ -452,7 +468,7 @@ export function StorageWorkspace({
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
-                {drive.usage.accounts.map((account) => (
+                {drive.usage.accounts.map((account, index) => (
                   <article
                     key={account.connectionId}
                     className="flex flex-col gap-2 rounded-xl border bg-card p-3.5"
@@ -470,7 +486,7 @@ export function StorageWorkspace({
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium">
-                          {account.label || account.email}
+                          {index + 1}. {account.label || account.email}
                         </p>
                         {account.label ? (
                           <p className="truncate text-[11px] text-muted-foreground">{account.email}</p>
@@ -608,7 +624,7 @@ export function StorageWorkspace({
                     Clear filters
                   </Button>
                 ) : (
-                  <Link href="/files">
+                  <Link href="/resources">
                     <Button>
                       <FolderOpen /> Upload a file
                     </Button>

@@ -1,6 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  experimental: {
+    // Offline detection plus automatic retry of blocked navigations,
+    // prefetches and Server Actions, and it exposes `useOffline()` from
+    // `next/offline`. Without it a dropped connection surfaces as a hard fetch
+    // error and the user has to reload; with it the request stays pending and
+    // resolves on its own when connectivity returns.
+    useOffline: true,
+  },
   async headers() {
     return [
       {

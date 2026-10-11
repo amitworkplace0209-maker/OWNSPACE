@@ -29,8 +29,8 @@ export default function OfflinePage() {
         <h1 className="text-2xl font-semibold tracking-tight">You&apos;re offline</h1>
         <p className="text-sm leading-relaxed text-muted-foreground">
           Ownspece needs a connection to load your projects, tasks and notes.
-          Anything you were already looking at stays on screen, but changes
-          can&apos;t be saved until the network comes back.
+          Your task list is kept on this device, so it is still readable —
+          changes are queued and saved the moment you are back online.
         </p>
       </div>
 
@@ -44,8 +44,8 @@ export default function OfflinePage() {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Ownspece works offline for reading once the app has been opened while
-        connected.
+        Your tasks stay readable offline — Ownspece keeps the last copy it
+        loaded and syncs your changes when the connection returns.
       </p>
     </main>
   );

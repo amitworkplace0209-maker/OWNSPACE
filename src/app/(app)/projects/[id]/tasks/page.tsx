@@ -34,7 +34,7 @@ export default async function ProjectTasksPage({
   const status = TASK_STATUSES.includes(sp.status as (typeof TASK_STATUSES)[number])
     ? (sp.status as string)
     : "all";
-  const due = ["today", "upcoming", "overdue", "none"].includes(sp.due ?? "")
+  const due = ["today", "upcoming", "overdue", "no-date"].includes(sp.due ?? "")
     ? (sp.due as string)
     : "";
 

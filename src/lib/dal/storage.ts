@@ -6,6 +6,43 @@ import { getAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/dal";
 import type { StoredFile } from "@/types";
 
+export type StorageBucketTotal = { bucket: string; bytes: number; objects: number };
+export type StorageReport = {
+  databaseBytes: number | null;
+  storageBytes: number;
+  storageObjects: number;
+  buckets: StorageBucketTotal[];
+  error: string | null;
+};
+
+export const getStorageReport = cache(async (): Promise<StorageReport> => {
+  await requireUser();
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("storage_report");
+  if (error || !data) {
+    return {
+      databaseBytes: null,
+      storageBytes: 0,
+      storageObjects: 0,
+      buckets: [],
+      error: error?.message ?? "Storage report unavailable.",
+    };
+  }
+  const row = data as {
+    database_bytes?: number;
+    storage_bytes?: number;
+    storage_objects?: number;
+    buckets?: StorageBucketTotal[];
+  };
+  return {
+    databaseBytes: typeof row.database_bytes === "number" ? row.database_bytes : null,
+    storageBytes: Number(row.storage_bytes ?? 0),
+    storageObjects: Number(row.storage_objects ?? 0),
+    buckets: Array.isArray(row.buckets) ? row.buckets : [],
+    error: null,
+  };
+});
+
 export type StorageCategory = {
   key: string;
   label: string;

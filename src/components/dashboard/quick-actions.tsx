@@ -64,7 +64,7 @@ const ACTIONS: Action[] = [
     id: "file",
     label: "Upload",
     hint: "Add a file",
-    href: "/files",
+    href: "/resources",
     icon: Upload,
   },
 ];

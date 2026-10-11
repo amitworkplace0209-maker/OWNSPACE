@@ -28,6 +28,7 @@ const WIZARD_COLUMNS = {
   ],
   project_nodes: ["notes", "parent_id", "node_type", "sort_order"],
   tasks: ["node_id", "start_date", "estimated_minutes", "parent_task_id"],
+  milestones: ["node_id", "phase_id", "title", "status"],
   checklists: ["node_id", "task_id", "parent_checklist_id", "due_date", "priority", "sort_order"],
   checklist_items: ["parent_item_id", "due_date", "priority", "description", "is_completed"],
   reminders: [

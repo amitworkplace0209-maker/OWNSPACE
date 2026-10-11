@@ -117,14 +117,13 @@ function ProjectActions({
 
 function ProjectIcon({ project }: { project: ProjectWithTags }) {
   return (
-    <Link
-      href={`/projects/${project.id}`}
-      className="flex size-9 shrink-0 items-center justify-center rounded-lg text-sm font-medium text-white hover:opacity-90"
+    <span
+      aria-hidden="true"
+      className="flex size-9 shrink-0 items-center justify-center rounded-lg text-sm font-medium text-white"
       style={{ backgroundColor: project.color ?? "var(--primary)" }}
-      aria-label={project.name}
     >
       {project.icon ?? project.name.slice(0, 2)}
-    </Link>
+    </span>
   );
 }
 
@@ -149,30 +148,39 @@ function ProjectCard({
   onDelete: (project: Project) => void;
 }) {
   return (
-    <Card className="group relative flex flex-col gap-3 p-4 transition hover:border-primary/40">
-      <div className="flex items-start justify-between gap-2">
+    <Card className="group/card relative flex flex-col gap-3 p-4 transition hover:border-primary/40 hover:shadow-md">
+      {/* Stretched link: the whole card is the hit target for the project. */}
+      <Link
+        href={`/projects/${project.id}`}
+        className="absolute inset-0 z-0 rounded-xl focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+      >
+        <span className="sr-only">Open {project.name}</span>
+      </Link>
+
+      <div className="pointer-events-none relative z-10 flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2.5">
           <ProjectIcon project={project} />
           <div className="flex min-w-0 flex-col gap-0.5">
-            <Link
-              href={`/projects/${project.id}`}
-              className="truncate text-sm font-medium hover:underline"
-            >
+            <span className="truncate text-sm font-medium group-hover/card:underline">
               {project.name}
-            </Link>
+            </span>
             <DueLabel dueDate={project.due_date} />
           </div>
         </div>
 
-        <ProjectActions project={project} onEdit={onEdit} onDelete={onDelete} />
+        <div className="pointer-events-auto">
+          <ProjectActions project={project} onEdit={onEdit} onDelete={onDelete} />
+        </div>
       </div>
 
       {project.description ? (
-        <p className="line-clamp-2 text-sm text-muted-foreground">{project.description}</p>
+        <p className="pointer-events-none relative z-10 line-clamp-2 text-sm text-muted-foreground">
+          {project.description}
+        </p>
       ) : null}
 
       {project.tag_names.length > 0 ? (
-        <div className="flex flex-wrap gap-1">
+        <div className="pointer-events-none relative z-10 flex flex-wrap gap-1">
           {project.tag_names.slice(0, 3).map((tag) => (
             <span
               key={tag}
@@ -184,7 +192,7 @@ function ProjectCard({
         </div>
       ) : null}
 
-      <div className="mt-auto flex flex-col gap-1.5">
+      <div className="pointer-events-none relative z-10 mt-auto flex flex-col gap-1.5">
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>Progress</span>
           <span className="tabular-nums">{project.progress ?? 0}%</span>
@@ -192,7 +200,7 @@ function ProjectCard({
         <Progress value={project.progress ?? 0} className="h-1.5" />
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+      <div className="pointer-events-none relative z-10 flex flex-wrap items-center gap-1.5 pt-1">
         <ProjectStatusBadge status={project.status} />
         <PriorityBadge priority={project.priority} />
       </div>
@@ -210,28 +218,34 @@ function ProjectListRow({
   onDelete: (project: Project) => void;
 }) {
   return (
-    <li>
-      <div className="flex items-center gap-3 border-b border-border/50 px-1 py-2.5 last:border-0 hover:bg-accent/30">
-        <ProjectIcon project={project} />
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <Link
-            href={`/projects/${project.id}`}
-            className="truncate text-sm font-medium hover:underline"
-          >
+    <li className="group/row relative">
+      <div className="flex items-center gap-3 border-b border-border/50 px-1 py-2.5 transition-colors last:border-0 group-hover/row:bg-accent/30">
+        <Link
+          href={`/projects/${project.id}`}
+          className="absolute inset-0 z-0 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+        >
+          <span className="sr-only">Open {project.name}</span>
+        </Link>
+
+        <div className="pointer-events-none relative z-10 shrink-0">
+          <ProjectIcon project={project} />
+        </div>
+        <div className="pointer-events-none relative z-10 flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="truncate text-sm font-medium group-hover/row:underline">
             {project.name}
-          </Link>
+          </span>
           {project.description ? (
             <p className="truncate text-xs text-muted-foreground">{project.description}</p>
           ) : null}
         </div>
 
         {project.tag_names.length > 0 ? (
-          <span className="hidden max-w-40 truncate text-xs text-muted-foreground md:block">
+          <span className="pointer-events-none relative z-10 hidden max-w-40 truncate text-xs text-muted-foreground md:block">
             {project.tag_names.join(" · ")}
           </span>
         ) : null}
 
-        <div className="hidden w-28 shrink-0 flex-col gap-1 sm:flex">
+        <div className="pointer-events-none relative z-10 hidden w-28 shrink-0 flex-col gap-1 sm:flex">
           <Progress value={project.progress ?? 0} className="h-1.5" />
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>Progress</span>
@@ -239,7 +253,7 @@ function ProjectListRow({
           </div>
         </div>
 
-        <div className="flex shrink-0 flex-col items-end gap-1">
+        <div className="pointer-events-none relative z-10 flex shrink-0 flex-col items-end gap-1">
           <div className="flex flex-wrap items-center justify-end gap-1.5">
             <ProjectStatusBadge status={project.status} />
             <PriorityBadge priority={project.priority} />
@@ -247,7 +261,9 @@ function ProjectListRow({
           <DueLabel dueDate={project.due_date} />
         </div>
 
-        <ProjectActions project={project} onEdit={onEdit} onDelete={onDelete} />
+        <div className="pointer-events-auto relative z-10 shrink-0">
+          <ProjectActions project={project} onEdit={onEdit} onDelete={onDelete} />
+        </div>
       </div>
     </li>
   );

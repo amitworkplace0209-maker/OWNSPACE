@@ -137,7 +137,7 @@ export const searchAll = cache(async (query: string): Promise<SearchResults> => 
         kind: "file",
         title: row.name,
         subtitle: null,
-        href: row.project_id ? `/projects/${row.project_id}/files` : `/files`,
+        href: row.project_id ? `/projects/${row.project_id}/files` : `/resources`,
       };
     }),
     milestones: (mileRes.data ?? []).map((m) => ({
