@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getUser } from "@/lib/dal";
 import { safeNextPath } from "@/lib/auth/utils";
-import { AuthCard } from "@/components/auth/auth-card";
+import { AuthShell } from "@/components/auth/auth-shell";
 import { LoginForm } from "@/components/auth/login-form";
 
 export default async function LoginPage({
@@ -18,8 +18,8 @@ export default async function LoginPage({
   const next = safeNextPath(params.next);
 
   return (
-    <AuthCard description="Sign in to access your workspace.">
+    <AuthShell title="Welcome back" description="Sign in to open your workspace.">
       <LoginForm next={next} />
-    </AuthCard>
+    </AuthShell>
   );
 }

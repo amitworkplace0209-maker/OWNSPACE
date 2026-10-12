@@ -5,14 +5,13 @@ import { headers } from "next/headers";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { safeNextPath } from "@/lib/auth/utils";
+import { validateEmail, validatePassword } from "@/lib/auth/validation";
 
 export type AuthState = {
   error?: string;
   success?: string;
   email?: string;
 };
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function requireFormValue(formData: FormData, name: string): string {
   const value = String(formData.get(name) ?? "").trim();
@@ -91,20 +90,6 @@ function friendlySignUpError(message: string | null, email: string): string {
     return "Password must be at least 6 characters long.";
   }
   return "Something went wrong while creating your account. Please try again.";
-}
-
-function validateEmail(email: string) {
-  if (!EMAIL_PATTERN.test(email)) {
-    return "Enter a valid email address.";
-  }
-  return null;
-}
-
-function validatePassword(password: string) {
-  if (password.length < 6) {
-    return "Password must be at least 6 characters long.";
-  }
-  return null;
 }
 
 export async function signInAction(
@@ -221,13 +206,17 @@ export async function signUpAction(
 export async function signOutAction(): Promise<void> {
   const supabase = await createClient();
 
-  // The offline task cache lives on the device, not on the server, so signing
-  // out has to delete it explicitly — otherwise a shared machine would open
-  // the next person's session onto the previous one's task titles.
+  // The offline caches live on the device, not on the server, so signing
+  // out has to delete them explicitly. Otherwise a shared machine would open
+  // the next person's session onto the previous one's task and reminder titles.
   const { data } = await supabase.auth.getUser();
   if (data.user) {
-    const { clearTaskCache } = await import("@/lib/offline/task-cache.client");
+    const [{ clearTaskCache }, { clearReminderCache }] = await Promise.all([
+      import("@/lib/offline/task-cache.client"),
+      import("@/lib/offline/reminder-cache.client"),
+    ]);
     await clearTaskCache(data.user.id);
+    await clearReminderCache(data.user.id);
   }
 
   await supabase.auth.signOut();

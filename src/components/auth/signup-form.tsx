@@ -1,13 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { AlertCircle, MailCheck } from "lucide-react";
+import { AlertCircle, MailCheck, ShieldCheck } from "lucide-react";
 import { useActionState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { signUpAction, type AuthState } from "@/lib/auth/actions";
 import { SubmitButton } from "@/components/auth/submit-button";
 
+/**
+ * Create an account.
+ *
+ * The MPIN is set on the *first sign-in*, not here, and the note below says so
+ * rather than leaving people wondering where it went. The reason is not a
+ * preference: at this point there is no authenticated session, so an MPIN chosen
+ * here would have to be carried through the confirmation email in the clear and
+ * written by a privileged server. A secret that crosses an unverified channel is
+ * worse than one that is asked for a moment later, from inside an app the user
+ * has already proved they own.
+ */
 export function SignUpForm() {
   const [state, formAction] = useActionState<AuthState, FormData>(signUpAction, {});
 
@@ -35,7 +46,7 @@ export function SignUpForm() {
       ) : null}
 
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="display_name">Display name (optional)</Label>
+        <Label htmlFor="display_name">Your name</Label>
         <Input
           id="display_name"
           name="display_name"
@@ -43,6 +54,7 @@ export function SignUpForm() {
           autoComplete="name"
           placeholder="Ada Lovelace"
           maxLength={60}
+          className="h-11 transition-all duration-200 focus-visible:ring-3"
         />
       </div>
 
@@ -52,8 +64,12 @@ export function SignUpForm() {
           id="email"
           name="email"
           type="email"
+          inputMode="email"
           autoComplete="email"
+          autoCapitalize="none"
+          spellCheck={false}
           placeholder="you@example.com"
+          className="h-11 transition-all duration-200 focus-visible:ring-3"
           required
         />
       </div>
@@ -67,6 +83,7 @@ export function SignUpForm() {
           autoComplete="new-password"
           placeholder="At least 6 characters"
           minLength={6}
+          className="h-11 transition-all duration-200 focus-visible:ring-3"
           required
         />
       </div>
@@ -80,9 +97,18 @@ export function SignUpForm() {
           autoComplete="new-password"
           placeholder="Repeat your password"
           minLength={6}
+          className="h-11 transition-all duration-200 focus-visible:ring-3"
           required
         />
       </div>
+
+      <p className="flex items-start gap-1.5 rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+        <ShieldCheck className="mt-0.5 size-3.5 shrink-0" />
+        <span>
+          After you sign in, you&apos;ll set an MPIN and an app lock — so nobody with your
+          phone can read your workspace.
+        </span>
+      </p>
 
       <SubmitButton pendingText="Creating account…">
         Create account
@@ -92,7 +118,7 @@ export function SignUpForm() {
         Already have an account?{" "}
         <Link
           href="/login"
-          className="font-medium text-foreground underline-offset-4 hover:underline"
+          className="font-medium text-foreground underline-offset-4 transition-colors hover:underline"
         >
           Sign in
         </Link>

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getUser } from "@/lib/dal";
-import { AuthCard } from "@/components/auth/auth-card";
+import { AuthShell } from "@/components/auth/auth-shell";
 import { SignUpForm } from "@/components/auth/signup-form";
 
 export default async function SignUpPage() {
@@ -10,8 +10,11 @@ export default async function SignUpPage() {
   }
 
   return (
-    <AuthCard description="Create your account to get started.">
+    <AuthShell
+      title="Create your workspace"
+      description="One account for projects, tasks, notes and money."
+    >
       <SignUpForm />
-    </AuthCard>
+    </AuthShell>
   );
 }
