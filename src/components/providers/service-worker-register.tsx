@@ -10,13 +10,16 @@ import { toast } from "sonner";
  * front of `/sw.js`, a browser can keep running last week's worker, and the
  * cache and offline policy in it never take effect.
  *
- * Registration is production-only. A worker in development caches the dev
- * server's build output, which changes on every save and produces stale pages
- * that are miserable to debug.
+ * Registration is *not* gated on NODE_ENV. It used to be, and that silently
+ * broke every notification toggle in development: with no worker registered,
+ * `navigator.serviceWorker.ready` never resolves, so `pushManager.subscribe`
+ * never ran and the button spun forever instead of reporting why. Push needs a
+ * worker; caching does not, and `public/sw.js` decides that for itself by
+ * looking at the hostname, so dev gets a worker that forwards everything to the
+ * network and caches nothing.
  */
 export function ServiceWorkerRegister() {
   useEffect(() => {
-    if (process.env.NODE_ENV !== "production") return;
     if (!("serviceWorker" in navigator)) return;
 
     let cancelled = false;

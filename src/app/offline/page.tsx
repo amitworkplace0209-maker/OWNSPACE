@@ -28,8 +28,8 @@ export default function OfflinePage() {
       <div className="flex max-w-md flex-col gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">You&apos;re offline</h1>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Ownspece needs a connection to load your projects, tasks and notes.
-          Your task list is kept on this device, so it is still readable —
+          Ownspece needs a connection to load new data, but your tasks and
+          reminders are kept on this device. Both stay readable and editable —
           changes are queued and saved the moment you are back online.
         </p>
       </div>
@@ -41,11 +41,14 @@ export default function OfflinePage() {
         <Button variant="outline" render={<Link href="/tasks" />}>
           Tasks <ArrowRight />
         </Button>
+        <Button variant="outline" render={<Link href="/reminders" />}>
+          Reminders <ArrowRight />
+        </Button>
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Your tasks stay readable offline — Ownspece keeps the last copy it
-        loaded and syncs your changes when the connection returns.
+        Ownspece keeps the last copy it loaded and syncs your changes when the
+        connection returns — nothing you do offline is lost.
       </p>
     </main>
   );

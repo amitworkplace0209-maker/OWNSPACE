@@ -21,6 +21,12 @@ const publicAssets = [
   "/icon.svg",
   "/icon-192x192.png",
   "/icon-512x512.png",
+  // The VAPID *public* key, which the browser needs in order to subscribe. It
+  // identifies the application and carries no secret — the private half never
+  // leaves the server — so it is safe to serve unauthenticated. Exempting it
+  // also means a signed-out or expired session gets the route's own JSON error
+  // instead of an HTML redirect the caller cannot parse.
+  "/api/push/public-key",
 ];
 
 export async function proxy(request: NextRequest) {

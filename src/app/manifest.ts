@@ -74,6 +74,13 @@ export default function manifest(): MetadataRoute.Manifest {
         icons: [{ src: "/icon-192x192.png", sizes: "192x192", type: "image/png" }],
       },
       {
+        name: "New reminder",
+        short_name: "Reminder",
+        description: "Set a reminder",
+        url: "/reminders?new=1",
+        icons: [{ src: "/icon-192x192.png", sizes: "192x192", type: "image/png" }],
+      },
+      {
         name: "Focus timer",
         short_name: "Focus",
         description: "Start a focus session",
