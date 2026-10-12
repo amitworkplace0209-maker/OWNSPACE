@@ -13,8 +13,15 @@ import { ProfileSettings } from "@/components/settings/profile-settings";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
 import { PreferencesSettings } from "@/components/settings/preferences-settings";
 import { PomodoroSettings } from "@/components/settings/pomodoro-settings";
+import { PwaSettings } from "@/components/settings/pwa-settings";
 import { ExportData } from "@/components/settings/export-data";
 import { AccountSettings } from "@/components/settings/account-settings";
+import {
+  AppLockSettings,
+  type LockSettings,
+} from "@/components/security/app-lock-settings";
+import { getAppLockState } from "@/lib/dal/security";
+import { listWebauthnCredentialsAction } from "@/lib/actions/security-webauthn";
 
 export const metadata: Metadata = {
   title: "Settings",
@@ -35,8 +42,26 @@ async function getAvatarUrl(path: string | null): Promise<string | null> {
 
 export default async function SettingsPage() {
   const user = await requireUser();
-  const [profile, prefs] = await Promise.all([getProfile(user.id), getPreferences(user.id)]);
+  const [profile, prefs, lock, credentials] = await Promise.all([
+    getProfile(user.id),
+    getPreferences(user.id),
+    getAppLockState(),
+    listWebauthnCredentialsAction(),
+  ]);
   const avatarUrl = await getAvatarUrl(profile?.avatar_url ?? null);
+
+  const lockSettings: LockSettings = {
+    lockEnabled: lock.is_lock_enabled,
+    hasMpin: lock.hasMpin,
+    biometricEnabled: lock.biometric_enabled,
+    // Whether this browser *could* enrol is decided on the client, where
+    // `PublicKeyCredential` and `isSecureContext` actually exist. Passing true
+    // here and letting the panel check would mean a server telling a browser
+    // something only the browser knows.
+    biometricAvailable: true,
+    credentials,
+    durationId: prefs?.lock_duration ?? "five",
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -99,6 +124,18 @@ export default async function SettingsPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
+        <Card id="pwa" className="scroll-mt-20">
+          <CardHeader>
+            <CardTitle>App &amp; offline</CardTitle>
+            <CardDescription>
+              Install Ownspece, and manage what is stored on this device.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <PwaSettings />
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle>Your data</CardTitle>
@@ -119,6 +156,20 @@ export default async function SettingsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Full width: the lock panel is three cards of its own, and squeezing it
+          into the two-column grid above would put an MPIN field next to a theme
+          picker, which invites the wrong click. */}
+      <section id="security" className="scroll-mt-20 flex flex-col gap-3">
+        <div>
+          <h2 className="text-base font-semibold tracking-tight">Security</h2>
+          <p className="text-sm text-muted-foreground">
+            Lock Ownspece behind an MPIN or your fingerprint, so someone with your phone cannot
+            read it.
+          </p>
+        </div>
+        <AppLockSettings settings={lockSettings} />
+      </section>
     </div>
   );
 }
