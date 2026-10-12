@@ -3,8 +3,9 @@ import "server-only";
 import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/dal";
-import { monthKey, monthRange, shiftMonth } from "@/lib/finance-logic";
+import { monthKey, monthRange } from "@/lib/finance-logic";
 import type {
+  FinanceAccount,
   FinanceBill,
   FinanceBudget,
   FinanceCategory,
@@ -35,11 +36,73 @@ export const getFinanceCategories = cache(async (): Promise<FinanceCategory[]> =
     .from("finance_categories")
     .select("*")
     .eq("user_id", user.id)
+    // Accounts first inside their book: a category picker should open on
+    // "Cash in hand", not on an alphabetically earlier "Bank account".
+    .order("kind", { ascending: true, nullsFirst: false })
     .order("name", { ascending: true });
 
   if (error || !data) return [];
   return data as FinanceCategory[];
 });
+
+/**
+ * Opening balances, one per category.
+ *
+ * Read as a plain list and joined in memory rather than as a nested select:
+ * `finance_accounts` is keyed by user, not by category, so a nested select on
+ * `finance_categories` would silently return nothing for a category that has no
+ * row yet, which is the common case.
+ */
+export const getFinanceAccounts = cache(async (): Promise<FinanceAccount[]> => {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from("finance_accounts")
+    .select("*")
+    .eq("user_id", user.id);
+
+  if (error || !data) return [];
+  return ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+    ...row,
+    opening_balance: Number(row.opening_balance),
+  })) as FinanceAccount[];
+});
+
+/**
+ * Opening balances as a lookup keyed by category id.
+ *
+ * The report engine wants "what did this category start with", not the raw row,
+ * and callers should not have to remember that a missing row means zero.
+ */
+export async function getOpeningBalances(): Promise<Map<string, number>> {
+  const accounts = await getFinanceAccounts();
+  return new Map(accounts.map((account) => [account.category_id, account.opening_balance]));
+}
+
+/**
+ * One category, or null.
+ *
+ * Deliberately returns null instead of calling `notFound()`: the same lookup
+ * backs a link-out and a page, and a 404 helper in a shared DAL turns a missing
+ * row inside a list into a whole-page error.
+ */
+export const getFinanceCategory = cache(
+  async (categoryId: string): Promise<FinanceCategory | null> => {
+    const user = await requireUser();
+    const supabase = await createClient();
+
+    const { data, error } = await supabase
+      .from("finance_categories")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("id", categoryId)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return data as FinanceCategory;
+  }
+);
 
 export type TransactionListOptions = {
   type?: "income" | "expense" | "all";
@@ -322,62 +385,163 @@ export const getHoldings = cache(async (): Promise<HoldingRow[]> => {
 });
 
 /**
+ * One category's whole world, for its own page.
+ *
+ * Separate from `getFinanceDashboard` because the shape differs: a category page
+ * needs the entire history of *one* category (to carry its balance forward and
+ * to chart a whole year) rather than one month of everything. The rows still go
+ * over the wire once, so the page stays a single round trip.
+ *
+ * Returns `category: null` rather than calling `notFound()` — the page decides
+ * what a missing category means, so the DAL stays a plain reader.
+ */
+export const getCategoryReportData = cache(
+  async (categoryId: string, options: { month?: string; projectId?: string } = {}) => {
+    const user = await requireUser();
+    const supabase = await createClient();
+    const month = options.month ?? monthKey();
+
+    const [category, accounts, holdings, entries] = await Promise.all([
+      getFinanceCategory(categoryId),
+      getFinanceAccounts(),
+      getHoldings(),
+      (async () => {
+        let query = supabase
+          .from("finance_transactions")
+          .select(
+            "*, category:finance_categories(id, name, color, kind), project:projects(id, name, color)"
+          )
+          .eq("user_id", user.id)
+          .eq("category_id", categoryId)
+          // Ascending, because `closingBalanceThrough` stops at the first entry
+          // in or after the target month — that only works on a sorted array.
+          .order("transaction_date", { ascending: true })
+          .order("id", { ascending: true })
+          .limit(20_000);
+
+        if (options.projectId) query = query.eq("project_id", options.projectId);
+        const { data } = await query;
+        return ((data ?? []) as unknown[]).map((row) => {
+          const transaction = row as TransactionRow;
+          return { ...transaction, amount: Number(transaction.amount) };
+        }) as TransactionRow[];
+      })(),
+    ]);
+
+    const account = accounts.find((entry) => entry.category_id === categoryId) ?? null;
+
+    return {
+      month,
+      category,
+      entries,
+      openingBalance: account?.opening_balance ?? 0,
+      account,
+      // Only an investment category has holdings; filtering here keeps the page
+      // from needing to know that.
+      holdings: holdings.filter((holding) => holding.category_id === categoryId),
+    };
+  }
+);
+
+/**
  * Everything the personal /finance page renders, from one page of queries.
  *
  * The month window is computed here and reused by the ledger, the budgets and
  * the trend, so the three can never describe different months.
+ *
+ * `allTime` is the other half of the balance. Carrying a balance forward means
+ * the opening figure for any month is "everything before it", which cannot be
+ * computed from a window that starts at the first of the month — so the whole
+ * history comes down once and the report engine slices it in memory. Bounded at
+ * 20k rows: roughly 1,600 transactions a year, and a ledger past that is worth
+ * paginating rather than shipping to the browser whole.
  */
 export const getFinanceDashboard = cache(
-  async (options: { month?: string; projectId?: string; trendMonths?: number } = {}) => {
+  async (
+    options: {
+      month?: string;
+      projectId?: string;
+      allTimeLimit?: number;
+    } = {}
+  ) => {
     const user = await requireUser();
     const supabase = await createClient();
 
     const month = options.month ?? monthKey();
     const { from, to } = monthRange(month);
-    const trendMonths = options.trendMonths ?? 6;
-    const trendFrom = `${shiftMonth(month, -(trendMonths - 1))}-01`;
+    const allTimeLimit = options.allTimeLimit ?? 20_000;
 
-    let txQuery = supabase
+    // Two separate builders rather than one reused twice. postgrest-js
+    // accumulates every `.order()` into a single ORDER BY, so re-ordering an
+    // already-ordered builder would emit
+    // `ORDER BY transaction_date DESC, transaction_date ASC, id ASC` — and
+    // Postgres sorts on the first key, so the "ascending" would be silently
+    // ignored and the carry-forward would walk the rows backwards.
+    let monthQuery = supabase
       .from("finance_transactions")
       .select(
-        "*, category:finance_categories(id, name, color), project:projects(id, name, color)"
+        "*, category:finance_categories(id, name, color, kind), project:projects(id, name, color)"
       )
       .eq("user_id", user.id)
-      .order("transaction_date", { ascending: false });
+      // Newest first, which is the order the ledger list renders in.
+      .order("transaction_date", { ascending: false })
+      .gte("transaction_date", from)
+      .lte("transaction_date", to)
+      .limit(1000);
 
-    if (options.projectId) txQuery = txQuery.eq("project_id", options.projectId);
+    let allQuery = supabase
+      .from("finance_transactions")
+      .select(
+        "*, category:finance_categories(id, name, color, kind), project:projects(id, name, color)"
+      )
+      .eq("user_id", user.id)
+      // Oldest first. The report engine reads this array forwards, and a stable
+      // id tiebreak keeps same-day rows in a fixed order.
+      .order("transaction_date", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(allTimeLimit);
 
-    const [monthRes, trendRes, budgets, bills, recurring, holdings, categories] = await Promise.all([
-      txQuery.gte("transaction_date", from).lte("transaction_date", to).limit(1000),
-      txQuery.gte("transaction_date", trendFrom).lte("transaction_date", to).limit(5000),
-      getBudgets({ month, projectId: options.projectId }),
-      options.projectId ? Promise.resolve([]) : getBills(),
-      getRecurring({ activeOnly: true, projectId: options.projectId }),
-      getHoldings(),
-      getFinanceCategories(),
-    ]);
+    if (options.projectId) {
+      monthQuery = monthQuery.eq("project_id", options.projectId);
+      allQuery = allQuery.eq("project_id", options.projectId);
+    }
 
-    const monthTransactions = ((monthRes.data ?? []) as unknown[]).map((row) => {
-      const transaction = row as TransactionRow;
-      return { ...transaction, amount: Number(transaction.amount) };
-    });
+    const [monthRes, allRes, budgets, bills, recurring, holdings, categories, accounts] =
+      await Promise.all([
+        monthQuery,
+        allQuery,
+        getBudgets({ month, projectId: options.projectId }),
+        options.projectId ? Promise.resolve([]) : getBills(),
+        getRecurring({ activeOnly: true, projectId: options.projectId }),
+        getHoldings(),
+        getFinanceCategories(),
+        getFinanceAccounts(),
+      ]);
 
-    const trendTransactions = ((trendRes.data ?? []) as unknown[]).map((row) => {
-      const transaction = row as TransactionRow;
-      return { ...transaction, amount: Number(transaction.amount) };
-    });
+    const toRows = (rows: unknown[]): TransactionRow[] =>
+      (rows as unknown[]).map((row) => {
+        const transaction = row as TransactionRow;
+        return { ...transaction, amount: Number(transaction.amount) };
+      });
+
+    const allTime = toRows(allRes.data ?? []);
 
     return {
       month,
-      transactions: monthTransactions,
-      trend: trendTransactions,
+      transactions: toRows(monthRes.data ?? []),
+      /** Kept for callers that still read a trend window; the same rows as allTime. */
+      trend: allTime,
+      allTime,
+      /** True when the ledger is past the limit and the carry-forward is approximate. */
+      allTimeTruncated: allTime.length >= allTimeLimit,
       budgets,
       bills,
       recurring,
       holdings,
       categories,
+      accounts,
       monthError: monthRes.error?.message ?? null,
-      trendError: trendRes.error?.message ?? null,
+      trendError: allRes.error?.message ?? null,
     };
   }
 );

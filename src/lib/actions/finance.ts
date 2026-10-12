@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getUserOrRedirect, friendlyError } from "@/lib/actions/helpers";
 import {
+  financeAccountSchema,
   financeBillSchema,
   financeBudgetSchema,
   financeCategorySchema,
@@ -12,10 +13,16 @@ import {
   financeTransactionSchema,
   parseForm,
 } from "@/lib/schemas";
+import { DEFAULT_FINANCE_CATEGORIES } from "@/config/finance-categories";
 import { nextRecurringDate, occurrencesBetween } from "@/lib/finance-logic";
 import { logActivity } from "@/lib/activity";
 
 export type FinanceFormState = { error?: string; data?: { id: string } };
+
+export type FinanceAccountFormState = {
+  error?: string;
+  data?: { categoryId: string };
+};
 
 export async function createFinanceCategoryAction(
   _prev: FinanceFormState,
@@ -28,7 +35,10 @@ export async function createFinanceCategoryAction(
 
   const { data, error } = await supabase
     .from("finance_categories")
-    .insert({ user_id: user.id, ...parsed.data })
+    // A user-made category is never `is_system`, whatever the form says: that
+    // flag exists so "reset to defaults" can tell the two apart, and letting a
+    // hidden field set it would let one row impersonate a seeded one.
+    .insert({ ...parsed.data, user_id: user.id, is_system: false })
     .select("id")
     .single();
   if (error) return { error: friendlyError(error, "Could not create the category.") };
@@ -44,6 +54,154 @@ export async function createFinanceCategoryAction(
 
   revalidateFinancePaths();
   return { data: data ? { id: data.id } : undefined };
+}
+
+export async function updateFinanceCategoryAction(
+  categoryId: string,
+  _prev: FinanceFormState,
+  formData: FormData
+): Promise<FinanceFormState> {
+  const user = await getUserOrRedirect();
+  const parsed = parseForm(financeCategorySchema, formData);
+  if (!parsed.data) return { error: parsed.error };
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("finance_categories")
+    .update(parsed.data)
+    .eq("user_id", user.id)
+    .eq("id", categoryId);
+  if (error) return { error: friendlyError(error, "Could not update the category.") };
+
+  revalidateFinancePaths();
+  return { data: { id: categoryId } };
+}
+
+/**
+ * Shows or hides a category on the main finance page.
+ *
+ * Deliberately a bare boolean rather than a batch endpoint: the page toggles one
+ * card at a time, and a "set these twelve to false" call would need a guard
+ * against a stale list wiping out something the user had just pinned elsewhere.
+ */
+export async function setCategoryPinnedAction(
+  categoryId: string,
+  pinned: boolean
+): Promise<{ error?: string }> {
+  const user = await getUserOrRedirect();
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("finance_categories")
+    .update({ is_pinned: pinned })
+    .eq("user_id", user.id)
+    .eq("id", categoryId);
+  if (error) return { error: friendlyError(error, "Could not update the category.") };
+
+  revalidateFinancePaths();
+  return {};
+}
+
+/**
+ * Sets the starter categories, skipping any whose name is already taken.
+ *
+ * `on conflict do nothing` on the (user_id, name, type) unique index rather than
+ * an up-front read: a second tab running this at the same moment would otherwise
+ * both decide there is nothing to insert and one would fail. Existing rows are
+ * never touched, so re-running this after the app adds a new category is safe
+ * and only adds what is missing.
+ */
+export async function seedFinanceCategoriesAction(): Promise<{
+  error?: string;
+  added?: number;
+}> {
+  const user = await getUserOrRedirect();
+  const supabase = await createClient();
+
+  const rows = DEFAULT_FINANCE_CATEGORIES.map((category) => ({
+    user_id: user.id,
+    name: category.name,
+    type: category.type,
+    kind: category.kind,
+    icon: category.icon,
+    color: category.color,
+    is_system: true,
+  }));
+
+  const { data, error } = await supabase
+    .from("finance_categories")
+    // `ignoreDuplicates` on the (user_id, name, type) index turns this into an
+    // insert-do-nothing, which is what makes re-running it safe: a category the
+    // user already has is left exactly as it is, including a rename they made.
+    // Two tabs pressing this at the same moment both succeed, where a read
+    // first would have had one of them fail on the unique index.
+    .upsert(rows, { onConflict: "user_id,name,type", ignoreDuplicates: true })
+    // Only the rows that were actually inserted come back, so `added` counts new
+    // categories rather than everything that was sent.
+    .select("id");
+
+  if (error) return { error: friendlyError(error, "Could not add the starter categories.") };
+
+  revalidateFinancePaths();
+  return { added: (data ?? []).length };
+}
+
+/**
+ * Sets the opening balance for a category.
+ *
+ * Upsert on `category_id` rather than insert-or-update in two steps, so the
+ * category can only ever have one. The money itself is never stored per month —
+ * every later balance is derived from this figure plus the transactions after
+ * it, which is why back-dating an entry still produces the right number.
+ */
+export async function saveFinanceAccountAction(
+  _prev: FinanceAccountFormState,
+  formData: FormData
+): Promise<FinanceAccountFormState> {
+  const user = await getUserOrRedirect();
+  const parsed = parseForm(financeAccountSchema, formData);
+  if (!parsed.data) return { error: parsed.error };
+  const supabase = await createClient();
+
+  // Confirms the category is the user's before writing an opening balance onto
+  // it — otherwise a guessed uuid would create a row nobody can see or delete.
+  const { data: category, error: lookupError } = await supabase
+    .from("finance_categories")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("id", parsed.data.category_id)
+    .maybeSingle();
+  if (lookupError || !category) return { error: "That category does not exist." };
+
+  const { error } = await supabase.from("finance_accounts").upsert(
+    {
+      user_id: user.id,
+      category_id: parsed.data.category_id,
+      opening_balance: parsed.data.opening_balance,
+      opening_month: parsed.data.opening_month,
+      notes: parsed.data.notes,
+    },
+    { onConflict: "category_id" }
+  );
+  if (error) return { error: friendlyError(error, "Could not save the opening balance.") };
+
+  revalidateFinancePaths();
+  return { data: { categoryId: parsed.data.category_id } };
+}
+
+export async function deleteFinanceAccountAction(categoryId: string): Promise<{ error?: string }> {
+  const user = await getUserOrRedirect();
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("finance_accounts")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("category_id", categoryId);
+  if (error) return { error: friendlyError(error, "Could not clear the opening balance.") };
+
+  revalidateFinancePaths();
+  return {};
 }
 
 export async function deleteFinanceCategoryAction(categoryId: string): Promise<{ error?: string }> {
@@ -129,6 +287,9 @@ export async function deleteFinanceTransactionAction(transactionId: string): Pro
  */
 function revalidateFinancePaths(): void {
   revalidatePath("/finance");
+  // A category edit changes its own page's headline numbers, and there is one
+  // page per category with no fixed set of paths to enumerate.
+  revalidatePath("/finance/category", "layout");
   revalidatePath("/lab");
   revalidatePath("/dashboard");
   revalidatePath("/analytics");

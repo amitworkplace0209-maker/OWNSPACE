@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useActionState, useTransition } from "react";
 import { toast } from "sonner";
@@ -131,6 +132,7 @@ export function FinanceWorkspace({
   month,
   projectId,
   readOnly = false,
+  preselectedCategoryId,
 }: {
   transactions: TransactionRow[];
   categories: FinanceCategory[];
@@ -142,6 +144,8 @@ export function FinanceWorkspace({
   month: string;
   projectId?: string;
   readOnly?: boolean;
+  /** Opens the ledger filtered to one category — a category page's "add entry". */
+  preselectedCategoryId?: string;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -150,7 +154,7 @@ export function FinanceWorkspace({
   const [tab, setTab] = React.useState<Tab>("overview");
   const [query, setQuery] = React.useState("");
   const [typeFilter, setTypeFilter] = React.useState("");
-  const [categoryFilter, setCategoryFilter] = React.useState("");
+  const [categoryFilter, setCategoryFilter] = React.useState(preselectedCategoryId ?? "");
   const [view, setView] = React.useState<"list" | "ledger">("list");
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
@@ -407,25 +411,34 @@ export function FinanceWorkspace({
         ) : null}
       </div>
 
-      <nav role="tablist" aria-label="Finance sections" className="flex flex-wrap items-center gap-0.5 rounded-xl border bg-card p-1">
-        {tabs.map((entry) => (
-          <button
-            key={entry.id}
-            role="tab"
-            type="button"
-            aria-selected={tab === entry.id}
-            onClick={() => setTab(entry.id)}
-            className={cn(
-              "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition",
-              tab === entry.id
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground"
-            )}
-          >
-            {entry.icon}
-            {entry.label}
-          </button>
-        ))}
+      <nav role="tablist" aria-label="Finance sections" className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-0.5 rounded-xl border bg-card p-1">
+          {tabs.map((entry) => (
+            <button
+              key={entry.id}
+              role="tab"
+              type="button"
+              aria-selected={tab === entry.id}
+              onClick={() => setTab(entry.id)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition",
+                tab === entry.id
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
+              )}
+            >
+              {entry.icon}
+              {entry.label}
+            </button>
+          ))}
+        </div>
+
+        {/* The report view is the default on /finance; this is the way back. */}
+        {!projectId ? (
+          <Button variant="outline" size="sm" render={<Link href={`/finance?month=${activeMonth}`} />}>
+            <LineChart /> Category reports
+          </Button>
+        ) : null}
       </nav>
 
       {tab === "overview" ? (
