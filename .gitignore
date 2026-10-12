@@ -38,3 +38,7 @@ next-env.d.ts
 
 # supabase
 supabase/.temp
+
+# Throwaway credentials written by scripts/audit-account.cjs for the console
+# audit. Never committed — a password in a commit is a password in a clone.
+.audit-credentials.json

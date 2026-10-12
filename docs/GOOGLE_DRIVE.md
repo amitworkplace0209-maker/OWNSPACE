@@ -22,7 +22,7 @@ The Google Drive integration is fully coded but requires `GOOGLE_CLIENT_ID` and 
 2. **Redirect URI**: `https://<your-domain>/auth/gdrive/callback`
    - For local development: `http://localhost:3000/auth/gdrive/callback`
 
-3. **Scope**: `https://www.googleapis.com/auth/drive.readonly`
+3. **Scope**: `https://www.googleapis.com/auth/drive` (full access)
 
 ### Security Architecture
 - OAuth secrets are server-side only

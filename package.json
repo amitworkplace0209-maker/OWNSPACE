@@ -10,10 +10,19 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:migrate": "node scripts/apply-migration.cjs",
-    "db:verify": "node scripts/verify-schema.cjs"
+    "db:verify": "node scripts/verify-schema.cjs",
+    "push:keys": "node scripts/generate-vapid.cjs",
+    "push:verify": "node scripts/verify-push.cjs",
+    "audit:account": "node scripts/audit-account.cjs",
+    "audit:seed": "node scripts/audit-seed.cjs",
+    "audit:console": "node scripts/console-audit.cjs",
+    "audit:verify": "node scripts/console-audit-verify.cjs",
+    "audit": "npm run audit:console && npm run audit:verify"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.0.3",
     "@supabase/ssr": "^0.12.6",
     "@supabase/supabase-js": "^2.115.0",
     "class-variance-authority": "^0.7.1",
@@ -40,6 +49,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.4",
     "pg": "^8.23.0",
+    "puppeteer-core": "^24.43.1",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^3.2.7"

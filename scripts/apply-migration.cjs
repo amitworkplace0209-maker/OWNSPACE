@@ -96,9 +96,31 @@ const PROBES = {
   // dropped `files_scope` constraint would report the migration as already run
   // and skip it forever.
   "023_workspace_resources.sql": `select 1 from pg_constraint where conname='project_resources_needs_target'`,
+  // A `create or replace function`, so re-running it is harmless — but without a
+  // probe it was reported as pending on every single migrate, which trains
+  // people to ignore the pending list.
+  "023_storage_report.sql": `select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                               where n.nspname='public' and p.proname='storage_report'`,
   "024_daily_journal_realtime.sql": `select 1 from pg_publication_tables
                                       where pubname='supabase_realtime'
                                         and tablename='planning_entries'`,
+  // Probed on the table this migration creates, not on the columns it adds to
+  // `finance_categories` — that table already existed from 012, so probing it
+  // would report this migration as applied and skip it forever.
+  "025_push_subscriptions.sql": `select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace
+                                  where n.nspname='public' and c.relname='push_subscriptions'`,
+  "026_finance_category_kinds.sql": `select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace
+                                      where n.nspname='public' and c.relname='finance_accounts'`,
+  "027_category_pins.sql": `select 1 from information_schema.columns
+                              where table_schema='public' and table_name='finance_categories'
+                                and column_name='is_pinned'`,
+  // Probed on `webauthn_challenges`, the last table this migration creates.
+  // Probing an earlier one would report the file as applied and skip the
+  // challenge table on a database that already had the credentials table —
+  // which is exactly what happened when this probe was first written against
+  // `webauthn_credentials` and the challenge table was added afterwards.
+  "028_security_mpin_biometric.sql": `select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace
+                                      where n.nspname='public' and c.relname='webauthn_challenges'`,
 };
 
 async function isApplied(client, file) {
