@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getUserOrRedirect, friendlyError } from "@/lib/actions/helpers";
 import { createNotification } from "@/lib/activity";
 import { fireTime, nextOccurrence } from "@/lib/reminder-logic";
+import { sendPushToUser } from "@/lib/push/send";
+import { pruneDeadSubscriptionsAction } from "@/lib/actions/push";
 
 export async function markNotificationReadAction(
   notificationId: string
@@ -83,6 +85,31 @@ export async function clearReadNotificationsAction(): Promise<{ error?: string }
   return {};
 }
 
+/**
+ * Deletes every notification, read or not.
+ *
+ * Scoped by `user_id` from the session, never by anything the caller sends, so a
+ * crafted request cannot reach another account's rows. RLS would stop it
+ * regardless; the filter is here so the intent is readable.
+ *
+ * Unlike `clearReadNotificationsAction`, unread rows go too — so the caller has
+ * to state the count it is about to destroy, and the UI has to ask first.
+ */
+export async function clearAllNotificationsAction(): Promise<{ error?: string }> {
+  const user = await getUserOrRedirect();
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("notifications")
+    .delete()
+    .eq("user_id", user.id);
+  if (error) return { error: friendlyError(error, "Could not clear notifications.") };
+
+  revalidatePath("/notifications");
+  revalidatePath("/dashboard");
+  return {};
+}
+
 export async function deleteNotificationAction(
   notificationId: string
 ): Promise<{ error?: string }> {
@@ -144,7 +171,7 @@ export async function processDueRemindersAction(): Promise<{ error?: string; cou
   const { data: candidates, error: fetchErr } = await supabase
     .from("reminders")
     .select(
-      "id, title, description, remind_at, status, priority, is_enabled, advance_minutes, repeat_rule, repeat_interval, repeat_until, repeat_days, notification_channels"
+      "id, title, description, project_id, remind_at, status, priority, is_enabled, advance_minutes, repeat_rule, repeat_interval, repeat_until, repeat_days, notification_channels"
     )
     .eq("user_id", user.id)
     .eq("status", "pending")
@@ -165,10 +192,13 @@ export async function processDueRemindersAction(): Promise<{ error?: string; cou
     });
     if (firesAt.getTime() > now.getTime()) continue;
 
-    // `in_app` is the only channel the app can actually deliver; a reminder
+    // `in_app` is the only channel the app can always deliver; a reminder
     // that opted out of it should not land in the notification feed.
     const channels = reminder.notification_channels ?? ["in_app"];
     const wantsInApp = channels.length === 0 || channels.includes("in_app");
+    // `browser` is the one channel that can reach a device with the app
+    // closed, which is the whole point of a web push subscription.
+    const wantsPush = channels.length === 0 || channels.includes("browser");
 
     if (wantsInApp) {
       await createNotification({
@@ -176,6 +206,30 @@ export async function processDueRemindersAction(): Promise<{ error?: string; cou
         type: "reminder",
         title: reminder.title ?? "Reminder",
         body: reminder.description ?? null,
+      });
+    }
+
+    if (wantsPush) {
+      await pushToDevices({
+        userId: user.id,
+        payload: {
+          title: reminder.title ?? "Reminder",
+          body: reminder.description ?? null,
+          // One notification slot per reminder: a re-fired repeat replaces its
+          // own notification rather than stacking beside it, which is what
+          // `tag` is for and what a native Android notification does.
+          tag: `reminder-${reminder.id}`,
+          url: reminder.project_id
+            ? projectRemindersPath(reminder.project_id)
+            : "/reminders",
+          type: "reminder",
+          entityId: reminder.id,
+          renotify: true,
+          actions: [
+            { action: "complete", title: "Done" },
+            { action: "snooze", title: "Snooze 10m" },
+          ],
+        },
       });
     }
 
@@ -210,4 +264,56 @@ export async function processDueRemindersAction(): Promise<{ error?: string; cou
   revalidatePath("/dashboard");
   revalidatePath("/activity");
   return { count: fired };
+}
+
+/** Deep link to a project's reminders tab. */
+function projectRemindersPath(projectId: string): string {
+  return "/projects/" + projectId + "/reminders";
+}
+
+/**
+ * Fans a notification out to every subscribed device.
+ *
+ * Best-effort throughout: a push that cannot be delivered is dropped and the
+ * in-app feed row still exists. Dead subscriptions are pruned so a revoked
+ * permission stops costing a request on every subsequent send.
+ */
+async function pushToDevices({
+  userId,
+  payload,
+}: {
+  userId: string;
+  payload: {
+    title: string;
+    body?: string | null;
+    tag?: string;
+    url?: string;
+    type?: string;
+    entityId?: string;
+    renotify?: boolean;
+    actions?: Array<{ action: string; title: string }>;
+  };
+}): Promise<void> {
+  try {
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from("push_subscriptions")
+      .select("id, endpoint, p256dh, auth")
+      .eq("user_id", userId);
+
+    const subscriptions = (data ?? []) as Array<{
+      id: string;
+      endpoint: string;
+      p256dh: string;
+      auth: string;
+    }>;
+
+    if (subscriptions.length === 0) return;
+
+    const { dead } = await sendPushToUser(subscriptions, payload);
+    if (dead.length > 0) await pruneDeadSubscriptionsAction(dead);
+  } catch {
+    // Push is an enhancement. A failure here must never fail the sweep, or one
+    // bad subscription would stop every remaining reminder from firing.
+  }
 }

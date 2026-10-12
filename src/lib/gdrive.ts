@@ -12,21 +12,16 @@ const GOOGLE_DRIVE_FILES_ENDPOINT = "https://www.googleapis.com/drive/v3/files";
 const GOOGLE_DRIVE_ABOUT_ENDPOINT = "https://www.googleapis.com/drive/v3/about";
 
 /**
- * Read-only access — browse, search and download. Grants are stored via an
- * offline refresh token so server actions can mint access tokens on demand.
+ * Full Drive access — browse, search, download, create, rename, move and trash
+ * files/folders across your entire Google Drive.
  */
-export const GDRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+export const GDRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
 
 export const FOLDER_MIME = "application/vnd.google-apps.folder";
 
-/**
- * Read/write is what makes a Drive actually usable from here — creating a
- * folder, uploading, renaming and trashing are all write operations. Scoped to
- * files only: it grants nothing over Drive settings or other apps' data.
- */
-export const GDRIVE_WRITE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+export const GDRIVE_WRITE_SCOPE = "https://www.googleapis.com/auth/drive";
 
-export const GDRIVE_SCOPES = `${GDRIVE_SCOPE} ${GDRIVE_WRITE_SCOPE}`;
+export const GDRIVE_SCOPES = GDRIVE_SCOPE;
 
 export function isGDriveConfigured(): boolean {
   return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);

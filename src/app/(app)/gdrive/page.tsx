@@ -15,9 +15,9 @@ const ERROR_MESSAGES: Record<string, string> = {
   state_mismatch: "That sign-in attempt expired. Start again from this page.",
   no_code: "Google did not return an authorisation code.",
   no_email: "Google did not report which account was authorised.",
-  no_refresh: "Google did not issue a refresh token, so this account cannot stay connected.",
+  no_refresh: "Google did not issue a refresh token. Try disconnecting and reconnecting, or ensure you're not blocking third-party cookies.",
   store_failed: "Could not save the connection. Check the database and try again.",
-  exchange_failed: "Could not complete the Google sign-in.",
+  exchange_failed: "Could not complete the Google sign-in. Please try again.",
   email_mismatch: "That is not the account Google authorised.",
 };
 
@@ -70,7 +70,7 @@ export default async function GDrivePage({
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Google Drive"
-        description="Link any number of Google accounts, browse every folder, and pull files into your projects."
+        description="Connect your Google Drive with full access. Browse all folders, search files, and link them directly to your projects, tasks, or notes."
       />
       <GDriveWorkspace
         configured={configured}

@@ -194,7 +194,7 @@ export function GDriveWorkspace({
         <EmptyState
           icon={AlertTriangle}
           title="Google Drive is not configured"
-          description="Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to the server environment, with this app's origin registered as an authorised redirect URI in the Google Cloud console."
+          description="Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your environment. In Google Cloud Console, add this app's callback URL (http://localhost:3000/auth/gdrive/callback for local dev) as an authorized redirect URI."
         />
       </div>
     );
@@ -514,16 +514,18 @@ function AddAccountCard() {
   const [pending, startTransition] = useTransition();
 
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-dashed p-3.5">
+    <div className="flex flex-col gap-3 rounded-xl border border-dashed p-4">
       <div className="flex items-center gap-2">
-        <Mail className="size-4 text-muted-foreground" />
-        <h3 className="text-sm font-medium">Add another account</h3>
+        <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <Cloud className="size-4" />
+        </div>
+        <div>
+          <h3 className="text-sm font-medium">Connect Google Drive</h3>
+          <p className="text-xs text-muted-foreground">
+            Sign in with your Google account to get full access to all your files and folders.
+          </p>
+        </div>
       </div>
-
-      <p className="text-xs text-muted-foreground">
-        Enter the Google account you want to browse. You will be sent to Google to approve access
-        to that account — an email on its own cannot open someone else&rsquo;s Drive.
-      </p>
 
       <form
         className="flex flex-wrap items-end gap-2"
@@ -545,17 +547,21 @@ function AddAccountCard() {
             type="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            placeholder="you@company.com"
+            placeholder="you@gmail.com or work@company.com"
             required
           />
         </FormField>
 
-        <Button type="submit" disabled={pending || !email.trim()}>
-          {pending ? <Loader2 className="animate-spin" /> : <Plus />} Connect
+        <Button type="submit" disabled={pending || !email.trim()} size="default">
+          {pending ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />} Connect with Google
         </Button>
       </form>
 
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
+
+      <p className="text-[11px] text-muted-foreground">
+        You’ll be redirected to Google to verify and grant full Drive access. We verify the email matches before saving the connection.
+      </p>
     </div>
   );
 }
@@ -1057,7 +1063,7 @@ function LinkedFiles({
         <EmptyState
           icon={Link2}
           title="No linked files yet"
-          description="Use the link button on any Drive file to attach it to a project, task or note."
+          description="Browse your Drive, then use the link button on any file to attach it to a project, task, or note."
         />
       ) : (
         <>
