@@ -11,14 +11,20 @@ import {
   Bell,
   CalendarClock,
   CheckCircle2,
+  ChevronRight,
   CircleAlert,
+  CloudOff,
+  FolderKanban,
   ListTodo,
   Pencil,
   Plus,
+  Radio,
   Repeat,
   Search,
   Trash2,
   TriangleAlert,
+  User,
+  WifiOff,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -29,16 +35,26 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { StatStrip, type StatStripItem } from "@/components/shared/stat-strip";
 import { WorkspaceToolbar, VIEW_ICONS } from "@/components/shared/workspace-toolbar";
 import { ReminderFormDialog, ScheduleSummary } from "@/components/reminders/reminder-form-dialog";
+import { QuickAddBar } from "@/components/reminders/quick-add-bar";
+import { NotificationSettingsButton } from "@/components/reminders/notification-settings";
+import { ReminderNotifier } from "@/components/reminders/reminder-notifier";
 import {
   bulkCompleteRemindersAction,
   bulkDeleteRemindersAction,
+  bulkReopenRemindersAction,
+  bulkRescheduleRemindersAction,
+  bulkSetReminderPriorityAction,
   bulkSetRemindersEnabledAction,
-  completeReminderAction,
+  bulkSnoozeRemindersAction,
   deleteReminderAction,
-  snoozeReminderAction,
-  toggleReminderEnabledAction,
-  unsnoozeReminderAction,
 } from "@/lib/actions/calendar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   PRIORITY_LABEL,
   SNOOZE_PRESETS,
@@ -53,7 +69,9 @@ import {
   type ReminderGrouping,
   type ReminderListItem,
 } from "@/lib/reminder-logic";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, toIsoSubmit } from "@/lib/format";
+import { useRemindersLive } from "@/hooks/use-reminders-live";
+import type { CachedProject } from "@/lib/offline/reminder-cache";
 import { cn } from "cn";
 import { PRIORITIES, type Priority, type Project } from "@/types";
 
@@ -76,6 +94,13 @@ const STATE_LABEL: Record<string, string> = {
 type ViewMode = "list" | "timeline";
 
 /**
+ * "scope" is not a `ReminderGrouping` — it is a grouping this workspace adds,
+ * splitting the list into Personal plus one section per project. It is kept out
+ * of the shared union so the pure `groupReminders` never has to know about it.
+ */
+type GroupChoice = ReminderGrouping | "scope";
+
+/**
  * Reminders.
  *
  * Shows project reminders and personal ones in the same list, because from the
@@ -83,6 +108,18 @@ type ViewMode = "list" | "timeline";
  * it. The old version split them apart and hid every advanced scheduling field
  * (repeat, channels, priority, advance), even though the database had carried
  * those columns since migration 017.
+ *
+ * Four things are layered on top of that original list, each isolated in its
+ * own file so this component stays readable:
+ *
+ *   - `useRemindersLive` — realtime patching plus an offline queue, so the list
+ *     stays live and every action still works with no connection.
+ *   - The app-wide `ReminderNotifier` in the app layout — fires due reminders
+ *     as toasts or OS notifications, obeying this device's own quiet hours,
+ *     priority floor and digest setting. Not mounted here: one instance owns the
+ *     tick, and a second would double-alert.
+ *   - `QuickAddBar` — "tomorrow 9am standup" without opening the form.
+ *   - `NotificationSettingsButton` — the per-device alert configuration.
  */
 export function RemindersWorkspace({
   reminders,
@@ -91,6 +128,7 @@ export function RemindersWorkspace({
   tasks,
   nodes,
   notes,
+  userId,
   initialProjectId = "",
   initialStatus = "",
   initialPriority = "",
@@ -117,6 +155,8 @@ export function RemindersWorkspace({
   tasks: { id: string; title: string; project_id: string | null }[];
   nodes: { id: string; title: string; project_id: string | null }[];
   notes: { id: string; title: string; project_id: string | null }[];
+  /** Namespaces the offline cache and the fired-alert history. */
+  userId: string;
   initialProjectId?: string;
   initialStatus?: string;
   initialPriority?: string;
@@ -129,7 +169,7 @@ export function RemindersWorkspace({
   const searchParams = useSearchParams();
 
   const [query, setQuery] = React.useState("");
-  const [groupBy, setGroupBy] = React.useState<ReminderGrouping | "">("");
+  const [groupBy, setGroupBy] = React.useState<GroupChoice | "">("");
   const [view, setView] = React.useState<ViewMode>("list");
   const [repeatFilter, setRepeatFilter] = React.useState<"any" | "repeating" | "once">("any");
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
@@ -137,7 +177,33 @@ export function RemindersWorkspace({
   const [editing, setEditing] = React.useState<ReminderListItem | null>(null);
   const [deleting, setDeleting] = React.useState<ReminderListItem | null>(null);
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
+  const [bulkMenuOpen, setBulkMenuOpen] = React.useState(false);
+  const [rescheduleAt, setRescheduleAt] = React.useState("");
   const [pending, startTransition] = useTransition();
+
+  // Projects are cached alongside the reminders so the offline page can still
+  // name them; only the fields the list renders are kept.
+  const cachedProjects = React.useMemo<CachedProject[]>(
+    () =>
+      projects.map((project) => ({
+        id: project.id,
+        name: project.name,
+        color: project.color,
+        status: project.status,
+        icon: project.icon,
+        is_pinned: project.is_pinned,
+        is_favorite: project.is_favorite,
+      })),
+    [projects]
+  );
+
+  const { status: liveStatus, liveReminders, queuedCount, update, syncNow } =
+    useRemindersLive({
+      userId,
+      reminders,
+      projects: cachedProjects,
+      enabled: !readOnly,
+    });
 
   // View preference is read once through a rAF so it never fights React over
   // the server-rendered markup.
@@ -192,7 +258,7 @@ export function RemindersWorkspace({
   const filtered = React.useMemo(
     () =>
       applyReminderFilters(
-        reminders,
+        liveReminders,
         {
           query,
           projectId: initialProjectId,
@@ -203,7 +269,7 @@ export function RemindersWorkspace({
         },
         now
       ),
-    [reminders, query, initialProjectId, initialPriority, initialStatus, repeatFilter, now]
+    [liveReminders, query, initialProjectId, initialPriority, initialStatus, repeatFilter, now]
   );
 
   // Selection is derived, not pruned: anything no longer visible is simply
@@ -215,9 +281,19 @@ export function RemindersWorkspace({
     return next.size === selected.size ? selected : next;
   }, [selected, filtered]);
 
+  // Group by scope by default rather than by state. "Personal" and each project
+  // become their own section, which is the split the user actually thinks in —
+  // grouping by state scattered one project's reminders across four headers.
+  // Inside a project the default falls back to state, because that is the order
+  // a single project's reminders are worked in.
+  const effectiveGroup: GroupChoice = groupBy || (initialProjectId ? "state" : "scope");
+
   const groups = React.useMemo(
-    () => groupReminders(filtered, groupBy || "none", now),
-    [filtered, groupBy, now]
+    () =>
+      effectiveGroup === "scope"
+        ? groupByScope(filtered)
+        : groupReminders(filtered, effectiveGroup || "none", now),
+    [filtered, effectiveGroup, now]
   );
 
   const visibleStats = React.useMemo(() => {
@@ -231,6 +307,9 @@ export function RemindersWorkspace({
       repeating: filtered.filter(isRecurring).length,
       personal: filtered.filter((item) => !item.project_id).length,
       live: filtered.filter(isLive).length,
+      projects: new Set(
+        filtered.filter((item) => item.project_id).map((item) => item.project_id as string)
+      ).size,
     };
   }, [filtered, now]);
 
@@ -241,7 +320,7 @@ export function RemindersWorkspace({
       value: stats.total,
       icon: AlarmClock,
       tone: "neutral",
-      hint: `${stats.personal} personal`,
+      hint: `${stats.personal} personal · ${visibleStats.projects} projects`,
     },
     {
       id: "today",
@@ -288,9 +367,11 @@ export function RemindersWorkspace({
     });
   }
 
-  function run(label: string, action: () => Promise<{ error?: string; affected?: number }>) {
-    const ids = [...effectiveSelected];
-    if (ids.length === 0) return;
+  function run(
+    label: string,
+    action: () => Promise<{ error?: string; affected?: number }>
+  ) {
+    if (effectiveSelected.size === 0) return;
 
     startTransition(async () => {
       const result = await action();
@@ -301,24 +382,39 @@ export function RemindersWorkspace({
       const count = result.affected ?? 0;
       toast.success(`${label} ${count} reminder${count === 1 ? "" : "s"}.`);
       setSelected(new Set());
+      setBulkMenuOpen(false);
       router.refresh();
     });
   }
 
-  function act(label: string, action: () => Promise<{ error?: string }>) {
-    startTransition(async () => {
-      const result = await action();
-      if (result.error) toast.error(result.error);
-      else {
-        toast.success(`${label}.`);
-        router.refresh();
-      }
-    });
+  /** Reschedule takes an explicit date, so it validates before calling the server. */
+  function reschedule() {
+    if (!rescheduleAt) {
+      toast.error("Pick a new date and time first.");
+      return;
+    }
+    run("Rescheduled", () =>
+      bulkRescheduleRemindersAction([...effectiveSelected], toIsoSubmit(rescheduleAt))
+    );
+    setRescheduleAt("");
   }
 
   return (
     <div className="flex flex-col gap-4">
+      {/* The notifier is not mounted here: it lives in the app layout so a
+          reminder alerts from any page, and two instances would each raise their
+          own toast for the same reminder. */}
+      <SyncStrip status={liveStatus} queuedCount={queuedCount} onRetry={syncNow} />
+
       <StatStrip items={statItems} activeId={activeTile} />
+
+      {!readOnly ? (
+        <QuickAddBar
+          defaultProjectId={
+            initialProjectId && initialProjectId !== "personal" ? initialProjectId : ""
+          }
+        />
+      ) : null}
 
       <WorkspaceToolbar
         filters={[
@@ -376,9 +472,9 @@ export function RemindersWorkspace({
           label: "Search reminders",
         }}
         grouping={{
-          value: groupBy,
-          onChange: (value) => setGroupBy(value as ReminderGrouping | ""),
-          options: GROUPINGS,
+          value: effectiveGroup,
+          onChange: (value) => setGroupBy(value as GroupChoice),
+          options: [{ value: "scope", label: "Personal & projects" }, ...GROUPINGS],
         }}
         view={{
           value: view,
@@ -392,6 +488,7 @@ export function RemindersWorkspace({
           !readOnly ? (
             <>
               <RepeatFilter value={repeatFilter} onChange={setRepeatFilter} />
+              <NotificationSettingsButton />
               <Button onClick={openCreate}>
                 <Plus /> New reminder
               </Button>
@@ -404,11 +501,40 @@ export function RemindersWorkspace({
         <BulkBar
           count={effectiveSelected.size}
           pending={pending}
+          menuOpen={bulkMenuOpen}
+          onMenuOpenChange={setBulkMenuOpen}
+          rescheduleAt={rescheduleAt}
+          onRescheduleChange={setRescheduleAt}
+          onReschedule={reschedule}
+          onSnooze={(minutes) =>
+            run("Snoozed", () => bulkSnoozeRemindersAction([...effectiveSelected], minutes))
+          }
+          onSnoozeTomorrow={() =>
+            run("Snoozed until tomorrow", () =>
+              bulkRescheduleRemindersAction(
+                [...effectiveSelected],
+                toIsoSubmit(snoozeUntilTomorrow(now).toISOString())
+              )
+            )
+          }
+          onPriority={(priority) =>
+            run("Reprioritised", () =>
+              bulkSetReminderPriorityAction([...effectiveSelected], priority)
+            )
+          }
           onComplete={() => run("Completed", () => bulkCompleteRemindersAction([...effectiveSelected]))}
-          onMute={() => run("Muted", () => bulkSetRemindersEnabledAction([...effectiveSelected], false))}
-          onUnmute={() => run("Unmuted", () => bulkSetRemindersEnabledAction([...effectiveSelected], true))}
+          onReopen={() => run("Reopened", () => bulkReopenRemindersAction([...effectiveSelected]))}
+          onMute={() =>
+            run("Muted", () => bulkSetRemindersEnabledAction([...effectiveSelected], false))
+          }
+          onUnmute={() =>
+            run("Unmuted", () => bulkSetRemindersEnabledAction([...effectiveSelected], true))
+          }
           onDelete={() => setBulkDeleting(true)}
-          onClear={() => setSelected(new Set())}
+          onClear={() => {
+            setSelected(new Set());
+            setBulkMenuOpen(false);
+          }}
         />
       ) : null}
 
@@ -418,7 +544,7 @@ export function RemindersWorkspace({
           title={reminders.length === 0 ? "No reminders yet" : "No matching reminders"}
           description={
             reminders.length === 0
-              ? "Create a reminder, or attach one to a project so it shows up there too."
+              ? "Add one above in a single line — “tomorrow 9am standup” — or open the full form."
               : "Try clearing a filter or searching for something else."
           }
           action={
@@ -447,13 +573,9 @@ export function RemindersWorkspace({
           items={filtered}
           readOnly={readOnly}
           pending={pending}
-          onComplete={(item, done) =>
-            act(done ? "Reopened" : "Completed", () => completeReminderAction(item.id, done))
-          }
+          onComplete={(item, done) => void update(item.id, { kind: "complete", value: done })}
           onToggleEnabled={(item) =>
-            act(item.is_enabled ? "Muted" : "Unmuted", () =>
-              toggleReminderEnabledAction(item.id)
-            )
+            void update(item.id, { kind: "enabled", value: !item.is_enabled })
           }
         />
       ) : (
@@ -464,22 +586,22 @@ export function RemindersWorkspace({
           pending={pending}
           now={now}
           onToggleSelected={toggleSelected}
-          onComplete={(item, done) =>
-            act(done ? "Reopened" : "Completed", () => completeReminderAction(item.id, done))
-          }
+          onComplete={(item, done) => void update(item.id, { kind: "complete", value: done })}
           onSnooze={(item, minutes) =>
-            act("Snoozed", () => snoozeReminderAction(item.id, minutes))
+            void update(item.id, {
+              kind: "snooze",
+              value: new Date(Date.now() + minutes * 60_000).toISOString(),
+            })
           }
           onSnoozeTomorrow={(item) =>
-            act("Snoozed until tomorrow", () =>
-              snoozeReminderAction(item.id, undefined, snoozeUntilTomorrow(now))
-            )
+            void update(item.id, {
+              kind: "snooze",
+              value: snoozeUntilTomorrow(now).toISOString(),
+            })
           }
-          onUnsnooze={(item) => act("Restored", () => unsnoozeReminderAction(item.id))}
+          onUnsnooze={(item) => void update(item.id, { kind: "unsnooze", value: "" })}
           onToggleEnabled={(item) =>
-            act(item.is_enabled ? "Muted" : "Unmuted", () =>
-              toggleReminderEnabledAction(item.id)
-            )
+            void update(item.id, { kind: "enabled", value: !item.is_enabled })
           }
           onEdit={(item) => {
             setEditing(item);
@@ -501,7 +623,9 @@ export function RemindersWorkspace({
         nodes={nodes}
         notes={notes}
         reminder={editing}
-        defaultProjectId={initialProjectId && initialProjectId !== "personal" ? initialProjectId : ""}
+        defaultProjectId={
+          initialProjectId && initialProjectId !== "personal" ? initialProjectId : ""
+        }
       />
 
       <ConfirmDialog
@@ -514,16 +638,11 @@ export function RemindersWorkspace({
         confirmLabel="Delete reminder"
         onConfirm={async () => {
           if (!deleting) return;
-          startTransition(async () => {
-            const result = await deleteReminderAction(deleting.id);
-            setDeleting(null);
-            if (result.error) {
-              toast.error(result.error);
-              return;
-            }
-            toast.success("Reminder deleted.");
-            router.refresh();
-          });
+          const target = deleting;
+          setDeleting(null);
+          await deleteReminderAction(target.id);
+          toast.success("Reminder deleted.");
+          router.refresh();
         }}
       />
 
@@ -553,6 +672,125 @@ export function RemindersWorkspace({
 }
 
 // ---------------------------------------------------------------------------
+// Connection + sync status
+// ---------------------------------------------------------------------------
+
+/**
+ * A single honest line about connectivity and the offline queue.
+ *
+ * Shown only when there is something to say. A permanently visible "connected"
+ * badge is noise that trains people to stop reading status indicators — but the
+ * moment an edit is queued and unsent, that is exactly when the user needs to
+ * know their change is not on the server yet.
+ */
+function SyncStrip({
+  status,
+  queuedCount,
+  onRetry,
+}: {
+  status: "connecting" | "live" | "offline" | "error";
+  queuedCount: number;
+  onRetry: () => void;
+}) {
+  if (status === "live" && queuedCount === 0) return null;
+
+  const offline = status === "offline";
+
+  return (
+    <div
+      role="status"
+      className={cn(
+        "flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-xs",
+        offline || queuedCount > 0
+          ? "border-warning/40 bg-warning/10 text-warning"
+          : "border-border bg-card text-muted-foreground"
+      )}
+    >
+      {offline ? (
+        <WifiOff aria-hidden="true" className="size-3.5 shrink-0" />
+      ) : (
+        <Radio aria-hidden="true" className="size-3.5 shrink-0" />
+      )}
+
+      <span className="font-medium">
+        {offline ? "Working offline" : status === "error" ? "Live updates interrupted" : "Connecting…"}
+      </span>
+
+      <span className="text-current/80">
+        {offline
+          ? queuedCount > 0
+            ? `${queuedCount} change${queuedCount === 1 ? "" : "s"} saved here and syncing when you reconnect.`
+            : "Your reminders are readable and editable. Changes are saved on this device."
+          : queuedCount > 0
+            ? `${queuedCount} change${queuedCount === 1 ? "" : "s"} waiting to sync.`
+            : "Live updates are reconnecting."}
+      </span>
+
+      {(offline || status === "error") && queuedCount > 0 ? (
+        <Button variant="outline" size="xs" onClick={onRetry} className="ml-auto">
+          Retry now
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scope grouping — personal vs each project
+// ---------------------------------------------------------------------------
+
+/**
+ * Groups into one "Personal" section plus one per project, each keeping its
+ * project's own ordering.
+ *
+ * Uses `sortReminders` inside every bucket so a project's rows stay in the
+ * urgency order the list view would have given them, rather than inheriting
+ * whatever order the filter happened to leave them in.
+ */
+function groupByScope(reminders: ReminderListItem[]) {
+  const personal: ReminderListItem[] = [];
+  const byProject = new Map<string, { label: string; items: ReminderListItem[] }>();
+
+  for (const reminder of reminders) {
+    if (!reminder.project_id) {
+      personal.push(reminder);
+      continue;
+    }
+    const bucket = byProject.get(reminder.project_id) ?? {
+      label: reminder.project_name ?? "Project",
+      items: [],
+    };
+    bucket.items.push(reminder);
+    byProject.set(reminder.project_id, bucket);
+  }
+
+  const groups = [];
+  if (personal.length > 0) {
+    groups.push({ id: "personal", label: "Personal", items: sortRemindersLocal(personal) });
+  }
+  for (const [id, bucket] of byProject) {
+    groups.push({ id: `project:${id}`, label: bucket.label, items: sortRemindersLocal(bucket.items) });
+  }
+  return groups;
+}
+
+/** Local re-export so this file does not import a sort it does not own. */
+function sortRemindersLocal(reminders: ReminderListItem[]): ReminderListItem[] {
+  return [...reminders].sort((a, b) => {
+    const aLive = isLive(a) ? 0 : 1;
+    const bLive = isLive(b) ? 0 : 1;
+    if (aLive !== bLive) return aLive - bLive;
+    if (aLive === 0 && a.remind_at !== b.remind_at) {
+      return a.remind_at.localeCompare(b.remind_at);
+    }
+    const rank = { urgent: 0, high: 1, medium: 2, low: 3, none: 4 } as Record<string, number>;
+    const diff = (rank[a.priority] ?? 9) - (rank[b.priority] ?? 9);
+    if (diff !== 0) return diff;
+    return a.title.localeCompare(b.title);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Toolbar extras
 // ---------------------------------------------------------------------------
 
@@ -570,7 +808,11 @@ function RepeatFilter({
   ];
 
   return (
-    <div role="group" aria-label="Repeat" className="flex items-center gap-0.5 rounded-lg border p-0.5">
+    <div
+      role="group"
+      aria-label="Repeat"
+      className="flex items-center gap-0.5 rounded-lg border p-0.5"
+    >
       {options.map((option) => (
         <button
           key={option.value}
@@ -594,7 +836,16 @@ function RepeatFilter({
 function BulkBar({
   count,
   pending,
+  menuOpen,
+  onMenuOpenChange,
+  rescheduleAt,
+  onRescheduleChange,
+  onReschedule,
+  onSnooze,
+  onSnoozeTomorrow,
+  onPriority,
   onComplete,
+  onReopen,
   onMute,
   onUnmute,
   onDelete,
@@ -602,7 +853,16 @@ function BulkBar({
 }: {
   count: number;
   pending: boolean;
+  menuOpen: boolean;
+  onMenuOpenChange: (open: boolean) => void;
+  rescheduleAt: string;
+  onRescheduleChange: (value: string) => void;
+  onReschedule: () => void;
+  onSnooze: (minutes: number) => void;
+  onSnoozeTomorrow: () => void;
+  onPriority: (priority: Priority) => void;
   onComplete: () => void;
+  onReopen: () => void;
   onMute: () => void;
   onUnmute: () => void;
   onDelete: () => void;
@@ -610,20 +870,36 @@ function BulkBar({
 }) {
   return (
     <div className="sticky top-16 z-20 flex flex-wrap items-center gap-2 rounded-xl border bg-card/95 p-2 shadow-lg backdrop-blur">
-      <span className="flex items-center gap-2 px-1 text-sm font-medium">
-        {count} selected
-      </span>
+      <span className="flex items-center gap-2 px-1 text-sm font-medium">{count} selected</span>
 
       <div className="h-4 w-px bg-border" />
 
       <Button size="sm" onClick={onComplete} disabled={pending}>
         <CheckCircle2 /> Complete
       </Button>
-      <Button size="sm" variant="outline" onClick={onMute} disabled={pending}>
+
+      {/* Snooze and reschedule both move the time, so they live behind one
+          control rather than two adjacent buttons competing for the row. */}
+      <ScheduleMenu
+        open={menuOpen}
+        onOpenChange={onMenuOpenChange}
+        pending={pending}
+        rescheduleAt={rescheduleAt}
+        onRescheduleChange={onRescheduleChange}
+        onReschedule={onReschedule}
+        onSnooze={onSnooze}
+        onSnoozeTomorrow={onSnoozeTomorrow}
+        onPriority={onPriority}
+      />
+
+      <Button variant="outline" size="sm" onClick={onMute} disabled={pending}>
         Mute
       </Button>
-      <Button size="sm" variant="outline" onClick={onUnmute} disabled={pending}>
+      <Button variant="outline" size="sm" onClick={onUnmute} disabled={pending}>
         Unmute
+      </Button>
+      <Button variant="ghost" size="sm" onClick={onReopen} disabled={pending}>
+        Reopen
       </Button>
 
       <div className="ml-auto flex items-center gap-1">
@@ -635,6 +911,92 @@ function BulkBar({
         </Button>
       </div>
     </div>
+  );
+}
+
+function ScheduleMenu({
+  open,
+  onOpenChange,
+  pending,
+  rescheduleAt,
+  onRescheduleChange,
+  onReschedule,
+  onSnooze,
+  onSnoozeTomorrow,
+  onPriority,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  pending: boolean;
+  rescheduleAt: string;
+  onRescheduleChange: (value: string) => void;
+  onReschedule: () => void;
+  onSnooze: (minutes: number) => void;
+  onSnoozeTomorrow: () => void;
+  onPriority: (priority: Priority) => void;
+}) {
+  const presets = SNOOZE_PRESETS.filter((preset) => preset.minutes > 0);
+
+  return (
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
+      <DropdownMenuTrigger
+        render={
+          <Button variant="outline" size="sm" disabled={pending} className="gap-1.5">
+            <CalendarClock /> Reschedule <ChevronRight className="size-3.5 opacity-60" />
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="start" className="w-60 p-2">
+        <DropdownMenuLabel className="px-1 pb-1 text-xs">Snooze by</DropdownMenuLabel>
+        <div className="flex flex-wrap gap-1">
+          {presets.map((preset) => (
+            <Button
+              key={preset.minutes}
+              variant="ghost"
+              size="xs"
+              onClick={() => onSnooze(preset.minutes)}
+            >
+              {preset.label}
+            </Button>
+          ))}
+          <Button variant="ghost" size="xs" onClick={onSnoozeTomorrow}>
+            Tomorrow
+          </Button>
+        </div>
+
+        <DropdownMenuSeparator className="my-2" />
+
+        <DropdownMenuLabel className="px-1 pb-1 text-xs">Move to a date</DropdownMenuLabel>
+        <div className="flex items-center gap-1.5">
+          <input
+            type="datetime-local"
+            value={rescheduleAt}
+            onChange={(event) => onRescheduleChange(event.target.value)}
+            aria-label="New date and time"
+            className="h-7 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          />
+          <Button size="xs" onClick={onReschedule} disabled={pending || !rescheduleAt}>
+            Set
+          </Button>
+        </div>
+
+        <DropdownMenuSeparator className="my-2" />
+
+        <DropdownMenuLabel className="px-1 pb-1 text-xs">Set priority</DropdownMenuLabel>
+        <div className="flex flex-wrap gap-1">
+          {PRIORITIES.map((priority) => (
+            <Button
+              key={priority}
+              variant="ghost"
+              size="xs"
+              onClick={() => onPriority(priority)}
+            >
+              {PRIORITY_LABEL[priority]}
+            </Button>
+          ))}
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -673,58 +1035,77 @@ function ListView({
 }) {
   return (
     <div className="flex flex-col gap-4">
-      {groups.map((group) => (
-        <section key={group.id} className="flex flex-col gap-2">
-          <header className="flex items-center gap-2 px-1">
-            {!readOnly ? (
-              <Checkbox
-                checked={group.items.length > 0 && group.items.every((item) => selected.has(item.id))}
-                onCheckedChange={() => {
-                  const ids = group.items.map((item) => item.id);
-                  const everySelected = ids.every((id) => selected.has(id));
-                  for (const id of ids) {
-                    if (everySelected === selected.has(id)) onToggleSelected(id);
+      {groups.map((group) => {
+        const isScope = group.id === "personal" || group.id.startsWith("project:");
+        return (
+          <section key={group.id} className="flex flex-col gap-2">
+            <header className="flex items-center gap-2 px-1">
+              {!readOnly ? (
+                <Checkbox
+                  checked={
+                    group.items.length > 0 && group.items.every((item) => selected.has(item.id))
                   }
-                }}
-                aria-label={`Select all in ${group.label}`}
-                className="size-4"
-              />
-            ) : null}
-            <h3
-              className={cn(
-                "text-xs font-medium tracking-wide uppercase",
-                group.id === "overdue" && "text-destructive"
-              )}
-            >
-              {group.id === "all" ? group.label : STATE_LABEL[group.id] ?? group.label}
-            </h3>
-            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">
-              {group.items.length}
-            </span>
-          </header>
+                  onCheckedChange={() => {
+                    const ids = group.items.map((item) => item.id);
+                    const everySelected = ids.every((id) => selected.has(id));
+                    for (const id of ids) {
+                      if (everySelected === selected.has(id)) onToggleSelected(id);
+                    }
+                  }}
+                  aria-label={`Select all in ${group.label}`}
+                  className="size-4"
+                />
+              ) : null}
 
-          <ul className="flex flex-col overflow-hidden rounded-xl border bg-card">
-            {group.items.map((item) => (
-              <ReminderRow
-                key={item.id}
-                item={item}
-                state={deriveReminderState(item, now)}
-                checked={selected.has(item.id)}
-                readOnly={readOnly}
-                pending={pending}
-                onToggleSelected={() => onToggleSelected(item.id)}
-                onComplete={onComplete}
-                onSnooze={onSnooze}
-                onSnoozeTomorrow={onSnoozeTomorrow}
-                onUnsnooze={onUnsnooze}
-                onToggleEnabled={onToggleEnabled}
-                onEdit={onEdit}
-                onDelete={onDelete}
-              />
-            ))}
-          </ul>
-        </section>
-      ))}
+              {isScope ? (
+                group.id === "personal" ? (
+                  <User aria-hidden="true" className="size-3.5 text-muted-foreground" />
+                ) : (
+                  <FolderKanban aria-hidden="true" className="size-3.5 text-muted-foreground" />
+                )
+              ) : null}
+
+              <h3
+                className={cn(
+                  "text-xs font-medium tracking-wide uppercase",
+                  group.id === "overdue" && "text-destructive"
+                )}
+              >
+                {group.id === "all"
+                  ? group.label
+                  : isScope
+                    ? group.label
+                    : STATE_LABEL[group.id] ?? group.label}
+              </h3>
+
+              <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">
+                {group.items.length}
+              </span>
+            </header>
+
+            <ul className="flex flex-col overflow-hidden rounded-xl border bg-card">
+              {group.items.map((item) => (
+                <ReminderRow
+                  key={item.id}
+                  item={item}
+                  state={deriveReminderState(item, now)}
+                  checked={selected.has(item.id)}
+                  readOnly={readOnly}
+                  pending={pending}
+                  onToggleSelected={() => onToggleSelected(item.id)}
+                  onComplete={onComplete}
+                  onSnooze={onSnooze}
+                  onSnoozeTomorrow={onSnoozeTomorrow}
+                  onUnsnooze={onUnsnooze}
+                  onToggleEnabled={onToggleEnabled}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                />
+              ))}
+            </ul>
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -795,9 +1176,7 @@ function ReminderRow({
           <span
             className={cn(
               "block size-5 rounded-full border-2 transition",
-              item.is_enabled
-                ? "border-primary"
-                : "border-muted-foreground/40",
+              item.is_enabled ? "border-primary" : "border-muted-foreground/40",
               "group-hover:border-primary"
             )}
           />
@@ -823,6 +1202,13 @@ function ReminderRow({
             <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
               <Repeat className="size-3" />
               {repeat}
+            </span>
+          ) : null}
+          {/* Says so plainly rather than letting a pending edit look saved. */}
+          {item.pending ? (
+            <span className="flex items-center gap-1 text-[11px] text-warning">
+              <CloudOff className="size-3" />
+              Not synced
             </span>
           ) : null}
         </div>
@@ -873,10 +1259,20 @@ function ReminderRow({
       {!readOnly ? (
         <div className="flex shrink-0 flex-wrap items-center gap-1">
           {live && !done ? (
-            <SnoozeMenu item={item} pending={pending} onSnooze={onSnooze} onSnoozeTomorrow={onSnoozeTomorrow} />
+            <SnoozeMenu
+              item={item}
+              pending={pending}
+              onSnooze={onSnooze}
+              onSnoozeTomorrow={onSnoozeTomorrow}
+            />
           ) : null}
           {item.status === "snoozed" ? (
-            <Button variant="outline" size="sm" onClick={() => onUnsnooze(item)} disabled={pending}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onUnsnooze(item)}
+              disabled={pending}
+            >
               Restore
             </Button>
           ) : null}
@@ -929,7 +1325,10 @@ function SnoozeMenu({
   // A muted reminder still shows its snooze control — muting stops the
   // automatic fire, not the manual "remind me in an hour".
   const presets = item.snooze_minutes
-    ? [{ label: `${item.snooze_minutes}m`, minutes: item.snooze_minutes }, ...SNOOZE_PRESETS]
+    ? [
+        { label: `${item.snooze_minutes}m`, minutes: item.snooze_minutes },
+        ...SNOOZE_PRESETS,
+      ]
     : SNOOZE_PRESETS;
 
   return (
@@ -982,7 +1381,9 @@ function TimelineView({
       bucket.push(item);
       buckets.set(key, bucket);
     }
-    return [...buckets.entries()].sort((a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime());
+    return [...buckets.entries()].sort(
+      (a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime()
+    );
   }, [items]);
 
   return (
@@ -1025,7 +1426,12 @@ function TimelineView({
                 />
 
                 <div className="min-w-0 flex-1">
-                  <p className={cn("truncate text-sm font-medium", isDone(item) && "line-through")}>
+                  <p
+                    className={cn(
+                      "truncate text-sm font-medium",
+                      isDone(item) && "line-through"
+                    )}
+                  >
                     {item.title}
                   </p>
                   <ScheduleSummary
@@ -1041,7 +1447,9 @@ function TimelineView({
                     <Button
                       variant="ghost"
                       size="icon-sm"
-                      aria-label={item.is_enabled ? `Mute ${item.title}` : `Unmute ${item.title}`}
+                      aria-label={
+                        item.is_enabled ? `Mute ${item.title}` : `Unmute ${item.title}`
+                      }
                       onClick={() => onToggleEnabled(item)}
                       disabled={pending}
                     >
@@ -1070,4 +1478,3 @@ function TimelineView({
     </div>
   );
 }
-

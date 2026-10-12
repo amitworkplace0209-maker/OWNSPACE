@@ -1,4 +1,5 @@
 import { getProject } from "@/lib/dal/projects";
+import { requireUser } from "@/lib/dal";
 import {
   getReminderAttachTargets,
   getReminderDashboard,
@@ -25,6 +26,7 @@ export default async function ProjectRemindersPage({
   searchParams: Promise<{ status?: string; priority?: string }>;
 }) {
   const [{ id }, query] = await Promise.all([params, searchParams]);
+  const user = await requireUser();
   const project = await getProject(id);
 
   const status = ["live", "overdue", "due_soon", "snoozed", "upcoming", "done", "pending", "triggered", "dismissed"].includes(
@@ -53,6 +55,7 @@ export default async function ProjectRemindersPage({
         tasks={targets.tasks}
         nodes={targets.nodes}
         notes={targets.notes}
+        userId={user.id}
         initialProjectId={id}
         initialStatus={status}
         initialPriority={priority}

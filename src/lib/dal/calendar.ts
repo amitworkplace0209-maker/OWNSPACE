@@ -154,6 +154,26 @@ export const getRecentActivity = cache(
   }
 );
 
+/**
+ * How many entries the whole feed holds.
+ *
+ * Separate from `getRecentActivity`, which is capped for rendering. The clear
+ * dialog needs the real total, and deriving it from a hundred-row page would
+ * tell somebody they are about to delete 100 when they have 4,000.
+ */
+export const getActivityCount = cache(async (): Promise<number> => {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const { count, error } = await supabase
+    .from("activities")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", user.id);
+
+  if (error) return 0;
+  return count ?? 0;
+});
+
 // ---------------------------------------------------------------------------
 // Dashboard: merged agenda
 // ---------------------------------------------------------------------------

@@ -18,6 +18,60 @@ export type ReminderListOptions = {
 };
 
 /**
+ * Just the reminders that could still fire, for the app-wide notifier.
+ *
+ * Separate from `getRemindersWithProjects` because the notifier is mounted in
+ * the app layout and therefore runs on *every* page. Pulling the full 500-row
+ * list to decide whether one reminder is due would tax every navigation in the
+ * app to serve one page's needs.
+ *
+ * Two deliberate choices:
+ *
+ *  - **Look-back, not look-ahead only.** A reminder whose time passed while the
+ *    app was shut still has to alert on the next open, so the window starts a
+ *    month in the past rather than at "now". Without it, closing the laptop on
+ *    Friday and opening it Monday would silently skip Friday's reminders.
+ *
+ *  - **A small, fixed select.** Only the nine fields the notifier reads, so no
+ *    note body or attachment list crosses the wire on every page load.
+ *
+ * Bounded rather than unbounded: a ledger with thousands of old pending
+ * reminders should not be able to make every page load unboundedly slower.
+ */
+export const getFireableReminders = cache(
+  async (options: { lookBackDays?: number; limit?: number } = {}): Promise<ReminderListItem[]> => {
+    const user = await requireUser();
+    const supabase = await createClient();
+
+    const since = new Date();
+    since.setDate(since.getDate() - (options.lookBackDays ?? 30));
+
+    const { data, error } = await supabase
+      .from("reminders")
+      .select(
+        "id, user_id, project_id, title, note, description, remind_at, snoozed_until, status, priority, is_enabled, advance_minutes, repeat_rule, project:projects(id, name)"
+      )
+      .eq("user_id", user.id)
+      // Done and dismissed can never fire again; snoozed ones come back later.
+      .in("status", ["pending", "snoozed"])
+      .gte("remind_at", since.toISOString())
+      .order("remind_at", { ascending: true })
+      .limit(options.limit ?? 200);
+
+    if (error || !data) return [];
+
+    const rows = data as unknown as Array<ReminderListItem & {
+      project?: { id: string; name: string } | null;
+    }>;
+
+    return rows.map(({ project, ...row }) => ({
+      ...row,
+      project_name: project?.name ?? null,
+    })) as ReminderListItem[];
+  }
+);
+
+/**
  * Every reminder the user owns, with the project name and colour joined in.
  *
  * The join is the point: the page shows a project badge on every row, and

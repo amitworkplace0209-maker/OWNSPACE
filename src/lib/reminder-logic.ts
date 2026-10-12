@@ -254,6 +254,12 @@ export type ReminderFilterState = {
 export type ReminderListItem = Reminder & {
   project_name: string | null;
   project_color: string | null;
+  /**
+   * Set while the row differs from the server because of a queued offline edit.
+   * Declared here as well as on `CachedReminder` so the list can render the
+   * "not synced" state without the DAL type and the cache type diverging.
+   */
+  pending?: boolean;
 };
 
 export type ReminderGroup = { id: string; label: string; items: ReminderListItem[] };

@@ -19,7 +19,7 @@ export default async function RemindersPage({
     new?: string;
   }>;
 }) {
-  await requireUser();
+  const user = await requireUser();
   const params = await searchParams;
 
   // Whitelisted against the real enums so a hand-edited query string cannot
@@ -55,6 +55,7 @@ export default async function RemindersPage({
         tasks={targets.tasks}
         nodes={targets.nodes}
         notes={targets.notes}
+        userId={user.id}
         initialProjectId={projectId}
         initialStatus={status}
         initialPriority={priority}

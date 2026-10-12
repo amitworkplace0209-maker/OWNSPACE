@@ -9,6 +9,8 @@ import {
 import {
   CURRENCIES,
   EVENT_TYPES,
+  FINANCE_CATEGORY_TYPES,
+  FINANCE_KINDS,
   FINANCE_TYPES,
   MILESTONE_STATUSES,
   NODE_TYPES,
@@ -259,12 +261,67 @@ export const calendarEventSchema = z
 // could write them. Every one of these is reachable from /reminders now.
 const uuidOrEmpty = z.string().uuid().optional().or(z.literal(""));
 
+/**
+ * A whole-number field that is allowed to be left blank.
+ *
+ * Normalises to `number | null` so callers never have to remember that a blank
+ * arrives as an empty string.
+ *
+ * The `.optional()` is load-bearing. An input the browser never rendered is not
+ * submitted at all, so the key is *absent* from the form data rather than
+ * present-and-empty. Without it a `union` rejects `undefined` and the error it
+ * produces is zod's generic "Invalid input" against a field the user cannot
+ * even see — which is what "repeat interval: Invalid input" was: choosing
+ * "does not repeat" or "custom weekdays" hides the interval box, and every
+ * otherwise-valid form failed on the field that was no longer on screen.
+ */
+/**
+ * A field rendered as one `<input name="x">` per chosen option.
+ *
+ * A browser submits a lone occurrence as a bare string, not a one-element array,
+ * so `z.array()` rejects it, the trailing `.catch([])` turns the failure into an
+ * empty list, and the user is told they picked nothing while looking at a ticked
+ * picker. This accepts either shape and always yields an array, so one option and
+ * four behave the same.
+ *
+ * `inner` describes a single option — `z.enum([...])` and friends.
+ */
+function listField<T extends z.ZodTypeAny>(inner: T) {
+  return z
+    .union([z.array(inner), inner])
+    .catch([])
+    .transform((value) => (Array.isArray(value) ? value : [value]));
+}
+
+/** Weekday numbers, 0 = Sunday, as submitted by the reminder weekday picker. */
+const weekdayListField = listField(z.coerce.number().int().min(0).max(6));
+
+/** Notification channels: in_app, browser, push, email. */
+const notificationChannelListField = listField(
+  z.enum(["in_app", "browser", "push", "email"])
+);
+
+/**
+ * A whole-number field that is allowed to be left blank.
+ *
+ * Normalises to `number | null` so callers never have to remember that a blank
+ * arrives as an empty string.
+ *
+ * The `.optional()` is load-bearing. An input the browser never rendered is not
+ * submitted at all, so the key is *absent* from the form data rather than
+ * present-and-empty. Without it a `union` rejects `undefined` and the error it
+ * produces is zod's generic "Invalid input" against a field the user cannot even
+ * see — which is what "repeat interval: Invalid input" was: choosing "does not
+ * repeat" or "custom weekdays" hides the interval box, and every otherwise-valid
+ * form failed on a field that was no longer on screen.
+ */
 const positiveIntOrEmpty = z
   .union([z.literal(""), z.coerce.number().int()])
-  .refine((value) => value === "" || value > 0, "Enter a number above zero");
+  .refine((value) => value === "" || value > 0, "Enter a number above zero")
+  .optional()
+  .transform((value) => (value === "" || value === undefined ? null : value));
 
-export const reminderSchema = z
-  .object({
+export const reminderSchema = z.object({
     title: nameRequired.max(200),
     note: optionalText(5000),
     description: optionalText(10_000),
@@ -287,17 +344,14 @@ export const reminderSchema = z
     repeat_interval: positiveIntOrEmpty,
     repeat_until: z.union([z.literal(""), z.string().regex(/^\d{4}-\d{2}-\d{2}$/)]).catch(""),
     // Weekdays arrive as repeated form fields, 0 = Sunday.
-    repeat_days: z.array(z.coerce.number().int().min(0).max(6)).max(7).catch([]),
+    repeat_days: weekdayListField,
 
     advance_minutes: z
       .union([z.literal(""), z.coerce.number().int().min(0).max(43_200)])
       .catch(""),
     snooze_minutes: positiveIntOrEmpty,
     sound: optionalText(80),
-    notification_channels: z
-      .array(z.enum(["in_app", "browser", "push", "email"]))
-      .min(1, "Pick at least one notification channel")
-      .catch([]),
+    notification_channels: notificationChannelListField,
   })
   .transform((d) => ({
     title: d.title,
@@ -312,11 +366,11 @@ export const reminderSchema = z
     priority: d.priority,
     is_enabled: d.is_enabled,
     repeat_rule: d.repeat_rule,
-    repeat_interval: d.repeat_interval === "" ? null : d.repeat_interval,
+    repeat_interval: d.repeat_interval,
     repeat_until: d.repeat_until || null,
     repeat_days: d.repeat_days,
     advance_minutes: d.advance_minutes === "" ? 0 : d.advance_minutes,
-    snooze_minutes: d.snooze_minutes === "" ? null : d.snooze_minutes,
+    snooze_minutes: d.snooze_minutes,
     sound: d.sound || null,
     notification_channels: d.notification_channels,
   }))
@@ -340,6 +394,22 @@ export const reminderSchema = z
       }
     }
   });
+
+/**
+ * Quick-add create — the typed twin of `reminderSchema`.
+ *
+ * The quick-add bar and the offline replay queue both need to create a reminder
+ * from plain values rather than FormData, so they cannot go through the form
+ * action. This schema applies the same title/priority/date rules to that path
+ * rather than leaving it unvalidated — a queued offline create is still a
+ * server write and has to be held to the same standard.
+ */
+export const quickReminderSchema = z.object({
+  title: nameRequired,
+  remind_at: z.string().datetime({ message: "Enter a valid date and time" }),
+  priority: z.enum(["none", "low", "medium", "high", "urgent"]).catch("none"),
+  project_id: uuidOrEmpty,
+});
 
 export const wikiPageSchema = z.object({
   title: nameRequired.max(200),
@@ -407,11 +477,36 @@ export const pomodoroSettingsSchema = z.object({
   break_duration_minutes: z.coerce.number().int().min(0).max(60),
 });
 
-export const financeCategorySchema = z.object({
-  name: z.string().trim().min(1, "Name is required").max(60),
-  type: z.enum(FINANCE_TYPES),
-  color: optionalText(30).transform((v) => (v ? v : null)),
-});
+export const financeCategorySchema = z
+  .object({
+    name: z.string().trim().min(1, "Name is required").max(60),
+    type: z.enum(FINANCE_CATEGORY_TYPES),
+    // Optional: an unclassified category still gets a full monthly and yearly
+    // report, it just gets the generic income/expense headline rather than a
+    // balance or a portfolio value.
+    kind: z.enum(FINANCE_KINDS).optional().or(z.literal("")),
+    icon: optionalText(40),
+    color: optionalText(30),
+  })
+  .transform((d) => ({
+    name: d.name,
+    type: d.type,
+    kind: d.kind || null,
+    icon: d.icon || null,
+    color: d.color || null,
+  }))
+  // `account` is only meaningful for a book that holds money. Allowing
+  // "investment/account" would produce a category whose transactions could never
+  // be summed into anything sensible.
+  .superRefine((d, ctx) => {
+    if (d.type === "account" && d.kind !== "cash_bank") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Only Cash & bank categories can be accounts",
+        path: ["kind"],
+      });
+    }
+  });
 
 export const financeTransactionSchema = z
   .object({
@@ -476,7 +571,7 @@ export const financeRecurringSchema = z
     repeat_rule: z.enum(RECURRENCE_RULES).catch("monthly"),
     repeat_interval: positiveIntOrEmpty,
     repeat_until: z.union([z.literal(""), dateField]).catch(""),
-    repeat_days: z.array(z.coerce.number().int().min(0).max(6)).max(7).catch([]),
+    repeat_days: weekdayListField,
     category_id: z.string().uuid().optional().or(z.literal("")),
     project_id: z.string().uuid().optional().or(z.literal("")),
     payment_method: z.enum(PAYMENT_METHODS).optional().or(z.literal("")),
@@ -491,7 +586,7 @@ export const financeRecurringSchema = z
     amount: d.amount,
     next_due_on: d.next_due_on,
     repeat_rule: d.repeat_rule,
-    repeat_interval: d.repeat_interval === "" ? 1 : d.repeat_interval,
+    repeat_interval: d.repeat_interval ?? 1,
     repeat_until: d.repeat_until || null,
     repeat_days: d.repeat_days,
     category_id: d.category_id || null,
@@ -556,6 +651,7 @@ export const financeHoldingSchema = z
     current_price: z.union([z.literal(""), z.coerce.number().min(0)]).catch(""),
     currency: z.enum(CURRENCIES).catch("INR"),
     acquired_on: z.union([z.literal(""), dateField]).catch(""),
+    category_id: z.string().uuid().optional().or(z.literal("")),
     notes: optionalText(5000),
   })
   .transform((d) => ({
@@ -566,12 +662,61 @@ export const financeHoldingSchema = z
     current_price: d.current_price === "" ? null : d.current_price,
     currency: d.currency,
     acquired_on: d.acquired_on || null,
+    // Links the holding to an investment category, so "Mutual funds" has a
+    // portfolio page rather than only a list of transactions.
+    category_id: d.category_id || null,
     notes: d.notes || null,
   }));
 
+export const financeAccountSchema = z.object({
+  category_id: z.string().uuid("Pick a category"),
+  // Negative is allowed and meaningful: a credit card's opening balance is what
+  // you already owe, so a positive-amount rule would make the most common kind of
+  // liability impossible to record.
+  opening_balance: z.coerce
+    .number()
+    .min(-1_000_000_000, "That is beyond the allowed range")
+    .max(1_000_000_000, "That is beyond the allowed range"),
+  opening_month: monthField,
+  notes: optionalText(5000),
+});
+
+/** Re-seeding the starter categories. Takes no input; every field is fixed. */
+export const seedFinanceCategoriesSchema = z.object({
+  confirm: z.union([z.literal("on"), z.literal("true")]).optional(),
+});
+
+/**
+ * Turns `FormData` into the plain object a schema validates.
+ *
+ * Repeated keys become arrays rather than collapsing. `Object.fromEntries` keeps
+ * only the *last* value for a repeated key, so a checkbox list — the reminder's
+ * "repeat on these weekdays" renders one `repeat_days` input per ticked day —
+ * reached the schema as a single string. `z.array()` rejected that, `.catch([])`
+ * swallowed it into an empty list, and the user was told they had picked no days
+ * while looking at a fully ticked picker. One `fromEntries` call was quietly
+ * disabling a feature.
+ */
+function formDataToObject(formData: FormData): Record<string, unknown> {
+  const raw: Record<string, unknown> = {};
+
+  for (const [key, value] of formData.entries()) {
+    const existing = raw[key];
+
+    if (existing === undefined) {
+      raw[key] = value;
+    } else if (Array.isArray(existing)) {
+      existing.push(value);
+    } else {
+      raw[key] = [existing, value];
+    }
+  }
+
+  return raw;
+}
+
 export function parseForm<T>(schema: z.ZodType<T>, formData: FormData): { data?: T; error?: string } {
-  const raw = Object.fromEntries(formData.entries());
-  const result = schema.safeParse(raw);
+  const result = schema.safeParse(formDataToObject(formData));
   if (!result.success) {
     const first = result.error.issues[0];
     return {
