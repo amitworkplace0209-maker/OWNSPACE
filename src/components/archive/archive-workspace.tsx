@@ -12,6 +12,7 @@ import { setProjectStatusAction, deleteProjectAction } from "@/lib/actions/proje
 import { formatDate } from "@/lib/format";
 import type { Project } from "@/types";
 import { useState } from "react";
+import { ProjectIcon } from "@/components/project-creator/icon-picker";
 
 export function ArchiveWorkspace({ projects }: { projects: Project[] }) {
   const router = useRouter();
@@ -55,7 +56,11 @@ export function ArchiveWorkspace({ projects }: { projects: Project[] }) {
                     className="flex size-9 shrink-0 items-center justify-center rounded-lg text-sm font-medium text-white"
                     style={{ backgroundColor: project.color ?? "var(--primary)" }}
                   >
-                    {project.icon ?? project.name.slice(0, 2)}
+                    <ProjectIcon
+                      name={project.icon}
+                      fallbackName={project.name}
+                      className="text-sm"
+                    />
                   </span>
                   <div className="flex min-w-0 flex-col gap-0.5">
                     <Link

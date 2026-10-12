@@ -35,6 +35,7 @@ import { formatCurrency, formatDate, formatRelativeTime } from "@/lib/format";
 import { daysUntil } from "@/lib/dashboard-logic";
 import { cn } from "cn";
 import type { Project, Tag } from "@/types";
+import { ProjectIcon } from "@/components/project-creator/icon-picker";
 
 /**
  * Project profile.
@@ -81,7 +82,11 @@ export function ProjectProfileSection({
                     className="flex size-8 items-center justify-center rounded-lg text-sm font-medium text-white"
                     style={{ backgroundColor: project.color ?? "var(--primary)" }}
                   >
-                    {project.icon}
+                    <ProjectIcon
+                      name={project.icon}
+                      fallbackName={project.name}
+                      className="size-4"
+                    />
                   </span>
                 ) : null}
                 <CardTitle className="truncate text-base">{project.name}</CardTitle>

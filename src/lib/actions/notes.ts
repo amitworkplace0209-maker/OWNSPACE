@@ -102,14 +102,17 @@ export async function deleteNoteAction(noteId: string): Promise<{ error?: string
 }
 
 /**
- * Notes are read by five places — the list, the detail page, the dashboard
- * card, the project's notes tab and global search — so a mutation that only
- * revalidates `/notes` leaves the other four showing a note that has moved.
+ * Notes are read by four places — the list, the detail page, the dashboard card
+ * and the project's notes tab — so a mutation that only revalidates `/notes`
+ * leaves the other three showing a note that has moved.
+ *
+ * The command palette is deliberately absent: it searches on demand from the
+ * browser, so there is no server render to invalidate, and revalidating a route
+ * that no longer exists is a no-op that reads like it is doing something.
  */
 function revalidateNotePaths(noteId?: string): void {
   revalidatePath("/notes");
   revalidatePath("/dashboard");
-  revalidatePath("/search");
   revalidatePath("/projects", "layout");
   if (noteId) revalidatePath(`/notes/${noteId}`);
 }

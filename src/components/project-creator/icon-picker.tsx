@@ -203,6 +203,105 @@ function getAllIcons(): IconItem[] {
   return icons;
 }
 
+/**
+ * Icon name -> component, for rendering and for the preview.
+ *
+ * Built once at module load rather than per render: it walks ninety entries, and
+ * a preview that re-derives the map on every keystroke is work spent on nothing.
+ *
+ * Lower-cased keys, because the name reaches us from a database column that
+ * nothing constrains to a case — a project saved as "rocket" has to render the
+ * same as one saved as "Rocket", or the icon silently vanishes for that project
+ * and only that project.
+ *
+ * Exported so the render path indexes it directly. React's static-components rule
+ * is right to reject `const Icon = someFunction(name)` followed by `<Icon />`: a
+ * component obtained through a call has no stable identity, so React cannot tell
+ * it from a new element type and throws its state away on every render. A plain
+ * property read has the same answer every time.
+ */
+export const ICON_BY_NAME: Record<
+  string,
+  React.ComponentType<{ className?: string }>
+> = Object.fromEntries(
+  ICON_CATEGORIES.flatMap((category) =>
+    category.icons.map((icon) => [icon.name.toLowerCase(), icon.component])
+  )
+);
+
+/**
+ * The component for an icon name, or null when the name is not in the catalogue.
+ *
+ * For logic and tests. Rendering code should read `ICON_BY_NAME` directly —
+ * see the note on that map.
+ */
+export function resolveIcon(name: string | null | undefined): React.ComponentType<{
+  className?: string;
+}> | null {
+  if (!name) return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  return ICON_BY_NAME[trimmed.toLowerCase()] ?? null;
+}
+
+/** True when the value is short enough to be an emoji rather than an icon name. */
+function looksLikeEmoji(value: string): boolean {
+  // Two characters covers 👨‍👩‍👧 and most flags; the catalogue's shortest name,
+  // "Zap", is longer. A stricter check would need an emoji table to ship.
+  return Array.from(value).length <= 2;
+}
+
+/**
+ * A project's icon, as a glyph.
+ *
+ * Every surface that shows a project — the card, the list, the detail header,
+ * the archive — renders the icon through this. They all used to print the raw
+ * `icon` column, so choosing "Rocket" displayed the word *Rocket* next to the
+ * project's name, everywhere, which reads as a bug and is one: the column holds
+ * a name, and only the catalogue can turn it back into a shape.
+ *
+ * Falls back in three steps, so there is no state where a project shows nothing
+ * where its icon should be: the catalogue glyph, then a custom emoji, then the
+ * first letter of its name.
+ */
+export function ProjectIcon({
+  name,
+  fallbackName,
+  className,
+  /** Fills the glyph with `currentColor` so it picks up the tile's colour. */
+  filled = true,
+}: {
+  name?: string | null;
+  /** Used when there is no usable icon. Usually the project name. */
+  fallbackName?: string | null;
+  className?: string;
+  filled?: boolean;
+}) {
+  const trimmed = name?.trim() ?? "";
+  // A direct map read, not `resolveIcon(...)` — see the note on ICON_BY_NAME.
+  const Glyph = trimmed ? ICON_BY_NAME[trimmed.toLowerCase()] : undefined;
+
+  if (Glyph) {
+    return <Glyph className={cn(filled && "fill-current", className)} aria-hidden="true" />;
+  }
+
+  if (trimmed && looksLikeEmoji(trimmed)) {
+    return (
+      <span className={cn("select-none leading-none", className)} role="img">
+        {trimmed}
+      </span>
+    );
+  }
+
+  // No icon, or a name this build does not ship: the project's initial, which is
+  // the same fallback a project created without an icon has always used.
+  return (
+    <span className={cn("font-bold", className)} aria-hidden="true">
+      {(fallbackName ?? trimmed).trim().charAt(0).toUpperCase() || "?"}
+    </span>
+  );
+}
+
 export function IconPicker({
   value,
   onChange,
@@ -426,13 +525,18 @@ interface IconPreviewProps {
 }
 
 const previewSizes = {
-  sm: "size-6 text-base",
-  md: "size-10 text-xl",
-  lg: "size-14 text-2xl",
-  xl: "size-20 text-4xl",
+  sm: "size-6",
+  md: "size-10",
+  lg: "size-14",
+  xl: "size-20",
 };
 
 export function IconPreview({ icon, color, size = "md", className }: IconPreviewProps) {
+  const trimmed = icon?.trim() ?? "";
+  // A direct map read, not `resolveIcon(...)` — see the note on ICON_BY_NAME.
+  const Glyph = trimmed ? ICON_BY_NAME[trimmed.toLowerCase()] : undefined;
+  const isEmoji = trimmed.length > 0 && !Glyph && looksLikeEmoji(trimmed);
+
   return (
     <div
       className={cn(
@@ -440,12 +544,28 @@ export function IconPreview({ icon, color, size = "md", className }: IconPreview
         previewSizes[size],
         className
       )}
-      style={{ backgroundColor: color ?? "var(--muted)", color: color ? "white" : "inherit" }}
-      aria-label={icon ? `Icon: ${icon}` : "No icon selected"}
+      // Only tint the tile for a real icon. An emoji already carries its own
+      // colours, and painting the box behind one fights with it.
+      style={Glyph || !isEmoji ? { backgroundColor: color ?? "var(--muted)" } : undefined}
+      aria-label={trimmed ? `Icon: ${trimmed}` : "No icon selected"}
     >
-      {icon ? (
-        <span className="select-none" role="img" aria-hidden="true">
-          {icon.length <= 2 ? icon : icon.slice(0, 2)}
+      {Glyph ? (
+        // `fill-current` so a monochrome lucide glyph actually takes the tile's
+        // colour instead of inheriting `currentColor` from the page text.
+        <Glyph className="size-1/2 fill-current" aria-hidden="true" />
+      ) : isEmoji ? (
+        <span className="select-none text-[inherit] leading-none" role="img">
+          {trimmed}
+        </span>
+      ) : trimmed ? (
+        // A name we do not recognise. Showing the name is honest and lets the
+        // user see which project is affected; showing nothing looks like a
+        // rendering bug.
+        <span
+          className="max-w-full truncate px-1 text-[9px] font-medium uppercase opacity-80"
+          title={`Unknown icon: ${trimmed}`}
+        >
+          {trimmed.slice(0, 3)}
         </span>
       ) : (
         <span className="text-muted-foreground">?</span>

@@ -4,6 +4,7 @@ import { cn } from "cn";
 import { Clock, MoreHorizontal } from "lucide-react";
 import Link from "next/link";
 import type { Project } from "@/types";
+import { ProjectIcon } from "@/components/project-creator/icon-picker";
 
 interface ProjectCardProps {
   project: Project;
@@ -30,13 +31,11 @@ export function ProjectCard({ project, className }: ProjectCardProps) {
       <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-xl" style={{ background: `var(--card-color, var(--primary))`, opacity: 0.6 }} />
       <div className="flex items-start justify-between gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary transition">
-          {project.icon ? (
-            <span className="text-lg">{project.icon}</span>
-          ) : (
-            <span className="text-lg font-bold text-muted-foreground">
-              {project.name.charAt(0).toUpperCase()}
-            </span>
-          )}
+          <ProjectIcon
+            name={project.icon}
+            fallbackName={project.name}
+            className="text-lg"
+          />
         </div>
         <div className="flex items-center gap-1">
           <span className={`size-2 rounded-full ${statusColor}`} />

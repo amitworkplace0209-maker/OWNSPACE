@@ -1,3 +1,4 @@
+import * as React from "react"
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "cn"
@@ -39,16 +40,46 @@ const buttonVariants = cva(
   }
 )
 
+/**
+ * Whether the `render` prop replaces the element with something that is not a
+ * native `<button>`.
+ *
+ * Base UI's Button assumes it renders a real button and, by default, attaches
+ * native button behaviour — `type="button"`, the disabled attribute, keyboard
+ * activation. Swapping in a `<Link>` (which is the common case here: a button
+ * that navigates) keeps all of that, and Base UI warns on every render that the
+ * semantics no longer match the element.
+ *
+ * The warning is worth fixing rather than silencing: without `nativeButton={false}`
+ * a link styled as a button is not reachable by Enter, and a disabled-looking one
+ * is still clickable. Telling Base UI the truth makes it emit the right
+ * attributes for whatever element is actually there.
+ *
+ * A `render` that is a function is left alone — it could return a button, and
+ * guessing either way would be wrong for one of the two cases.
+ */
+function rendersNonButton(render: unknown): boolean {
+  if (!render || typeof render === "function") return false
+  if (React.isValidElement(render)) return render.type !== "button"
+  // The render-prop form: `<div />` or a component. Components are assumed to be
+  // buttons, since guessing wrong on a custom component would silence the
+  // warning for the case it was written for.
+  return false
+}
+
 function Button({
   className,
   variant = "default",
   size = "default",
+  render,
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
   return (
     <ButtonPrimitive
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
+      render={render}
+      nativeButton={rendersNonButton(render) ? false : props.nativeButton}
       {...props}
     />
   )

@@ -1236,6 +1236,43 @@
   animation: live-pulse 2.4s ease-out infinite;
 }
 
+/* The notification bell, when something new has arrived.
+   Two swings that damp towards rest rather than a shake, because a shake reads
+   as an error and this is not one — it reads as "someone knocked". Capped at
+   900ms by a timer in the component, so this never loops on its own. */
+@keyframes bell-ring {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  15% {
+    transform: rotate(11deg);
+  }
+  30% {
+    transform: rotate(-9deg);
+  }
+  45% {
+    transform: rotate(6deg);
+  }
+  60% {
+    transform: rotate(-4deg);
+  }
+  75% {
+    transform: rotate(2deg);
+  }
+}
+
+.animate-bell-ring {
+  animation: bell-ring 0.9s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+/* The bell is a 16px glyph inside a 32px button. Scaling it from its centre
+   looks like the button is pulsing; scaling the glyph reads as the bell moving,
+   which is the thing that actually happened. */
+.animate-bell-ring > svg {
+  transform-origin: top center;
+}
+
 /* Board columns use a conic sweep on the top edge to show where a drag would
    land. Purely decorative, and disabled below the md breakpoint where columns
    scroll horizontally instead. */
@@ -1553,7 +1590,30 @@ input:focus, textarea:focus, select:focus {
 .page-grid {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1rem;
+}
+
+/*
+ * A dashboard card that shares a grid row with a taller neighbour.
+ *
+ * Grid rows take the height of their tallest cell, and a card that does not grow
+ * with its row leaves the wrapper stretched and empty underneath — which looks
+ * like a gap punched between the cards rather than like a shorter card. Making
+ * the wrapper a flex column and letting its single child fill means the card's
+ * border and background always reach the bottom of the row.
+ *
+ * `min-height: 0` lets the child actually shrink if a row ever has to be
+ * shorter than its content, instead of overflowing the grid.
+ */
+.dashboard-slot {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.dashboard-slot > * {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .page-grid-2col {

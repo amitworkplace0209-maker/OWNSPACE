@@ -18,6 +18,7 @@ import {
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { openCommandPalette } from "@/components/layout/command-palette";
 import { startGDriveAuthAction, disconnectGDriveAction } from "@/lib/actions/gdrive";
 import type { GDriveStatus } from "@/lib/dal/gdrive";
 import { formatFileSize } from "@/lib/format";
@@ -269,6 +270,11 @@ export function LabWorkspace({
         <h2 className="flex items-center gap-1.5 text-sm font-medium">
           <Search className="size-4 text-primary" /> Search everything
         </h2>
+           {/* Hands the text to the palette rather than rendering results here.
+               A second search box would drift out of step with the palette's —
+               this one has no results of its own to show, and pretending
+               otherwise is how two search boxes end up disagreeing about what
+               exists. */}
            <form
              className="flex gap-2"
              onSubmit={(e) => {
@@ -279,7 +285,7 @@ export function LabWorkspace({
                  return;
                }
                setSearchError(null);
-               router.push(`/search?q=${encodeURIComponent(q)}`);
+               openCommandPalette(q);
              }}
            >
            <input

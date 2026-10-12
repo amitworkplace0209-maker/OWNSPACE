@@ -40,7 +40,8 @@ export function MobileBottomNav() {
                 <span
                   aria-hidden="true"
                   className={cn(
-                    "flex h-8 min-w-14 items-center justify-center rounded-xl transition-colors",
+                    "flex h-8 min-w-14 items-center justify-center rounded-xl transition-all duration-200",
+                    "group-hover/tab:scale-110",
                     active && "nav-pill-active"
                   )}
                 >
@@ -51,7 +52,8 @@ export function MobileBottomNav() {
             );
 
             const className = cn(
-              "flex flex-1 flex-col items-center justify-center gap-1 pt-1.5 pb-1.5 transition-colors",
+              "group/tab flex flex-1 flex-col items-center justify-center gap-1 pt-1.5 pb-1.5",
+              "transition-colors duration-200 hover:text-foreground",
               active ? "text-primary" : "text-muted-foreground"
             );
 

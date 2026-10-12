@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { CalendarDays, ChevronLeft, ChevronRight, Flag, Timer, Bell, CheckSquare } from "lucide-react";
 import { EmptyState } from "@/components/shared/empty-state";
+import { localDateStr, localMonthStr } from "@/components/timeline/timeline-labels";
 import { cn } from "cn";
 
 export type TimelineItem = {
@@ -32,33 +33,6 @@ const kindLabel: Record<Kind, string> = {
   event: "Events",
   reminder: "Reminders",
 };
-
-const statusLabel: Record<string, string> = {
-  pending: "Pending",
-  active: "Active",
-  completed: "Completed",
-  triggered: "Triggered",
-  dismissed: "Dismissed",
-  snoozed: "Snoozed",
-  archived: "Archived",
-};
-
-export function statusLabelOf(status: string): string {
-  return statusLabel[status] ?? status;
-}
-
-function localDateStr(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function localMonthStr(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  return `${y}-${m}`;
-}
 
 function sortItems(items: TimelineItem[]) {
   return [...items].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));

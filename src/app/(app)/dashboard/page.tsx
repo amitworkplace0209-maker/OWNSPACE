@@ -3,7 +3,6 @@ import { getProfile, requireUser } from "@/lib/dal";
 import { getProjectSummary } from "@/lib/dal/projects";
 import { getTaskSummary, getTodayWork, getTasks } from "@/lib/dal/tasks";
 import { getAnalyticsSnapshot } from "@/lib/dal/analytics";
-import { ReminderSweep } from "@/components/dashboard/reminder-sweep";
 import { InstallPrompt } from "@/components/layout/install-prompt";
 import {
   DashboardHeader,
@@ -34,6 +33,7 @@ import {
   TimelineSkeleton,
 } from "@/components/dashboard/dashboard-skeletons";
 import { dueTodayTone, greetingFor, overdueTone } from "@/lib/dashboard-logic";
+import { cn } from "cn";
 
 export const metadata = {
   title: "Dashboard",
@@ -189,7 +189,11 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <div className={slot}>
+    // `dashboard-slot` makes this a flex column whose single child fills the
+    // height. A grid row is as tall as its tallest card, so a short card beside
+    // a tall one left the wrapper stretched with empty space under the card —
+    // which reads as a hole punched in the layout rather than as breathing room.
+    <div className={cn("dashboard-slot", slot)}>
       <SectionErrorBoundary title={title}>
         <Suspense fallback={fallback}>{children}</Suspense>
       </SectionErrorBoundary>
@@ -200,7 +204,9 @@ function Section({
 export default function DashboardPage() {
   return (
     <div className="page-grid">
-      <ReminderSweep />
+      {/* No ReminderSweep here: the app-wide notifier already runs it, on every
+          page. Leaving a second one on the dashboard would sweep the same rows
+          twice and, on a shared reminder, fire the same alert twice. */}
 
       <InstallPrompt />
 
@@ -214,7 +220,7 @@ export default function DashboardPage() {
 
       <QuickActions />
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-3 lg:grid-cols-3">
         <Section
           title="Today's work"
           slot={SLOT.todayWork}

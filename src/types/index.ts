@@ -217,6 +217,11 @@ export type UserPreferences = {
   card_style: CardStyle;
   density: Density;
   background_preset: BackgroundPreset;
+  /**
+   * How long the app stays unlocked after the MPIN or a fingerprint opens it.
+   * Only read while the lock is on; ignored otherwise.
+   */
+  lock_duration: string;
   created_at: string;
   updated_at: string;
 };
@@ -635,6 +640,36 @@ export type TagWithUsage = Tag & { usage: number };
 export const FINANCE_TYPES = ["income", "expense"] as const;
 export type FinanceType = (typeof FINANCE_TYPES)[number];
 
+/**
+ * What a category *is*, which is a wider set than a transaction's type.
+ *
+ * `account` exists because "Cash in hand" is neither income nor an expense — it
+ * is money sitting somewhere. Transactions flow in and out of it, so it has to
+ * be a category, but folding it into `expense` would list every withdrawal as
+ * spending. Everything that groups by category filters on `income`/`expense`, so
+ * accounts stay out of those breakdowns automatically.
+ */
+export const FINANCE_CATEGORY_TYPES = ["income", "expense", "account"] as const;
+export type FinanceCategoryType = (typeof FINANCE_CATEGORY_TYPES)[number];
+
+/**
+ * Which book a category belongs to. The kind picks the metrics and the chart a
+ * category page renders — a household category shows a budget comparison, an
+ * account shows a running balance, an investment shows P/L.
+ *
+ * Null is allowed: a category the user typed themselves is unclassified until
+ * they pick one, and the app renders the generic income/expense treatment.
+ */
+export const FINANCE_KINDS = [
+  "income",
+  "expense",
+  "household",
+  "cash_bank",
+  "investment",
+  "liability",
+] as const;
+export type FinanceKind = (typeof FINANCE_KINDS)[number];
+
 export const PAYMENT_METHODS = [
   "cash",
   "card",
@@ -649,10 +684,61 @@ export type FinanceCategory = {
   id: string;
   user_id: string;
   name: string;
-  type: FinanceType;
+  type: FinanceCategoryType;
+  /** Which book this belongs to; null when the user never classified it. */
+  kind: FinanceKind | null;
+  /** lucide-react icon name, e.g. "home". */
+  icon: string | null;
+  /** True for the categories the app seeds; the user can still delete them. */
+  is_system: boolean;
+  /** Shown on the main finance page. Unpinned ones keep their own page. */
+  is_pinned: boolean;
   color: string | null;
   created_at: string;
   updated_at: string;
+};
+
+/** Opening balance for one category — the money held at the start of a month. */
+export type FinanceAccount = {
+  id: string;
+  user_id: string;
+  category_id: string;
+  /** Negative is meaningful: a credit card starts below zero. */
+  opening_balance: number;
+  /** YYYY-MM the opening balance is measured at. */
+  opening_month: string;
+  currency: Currency;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * One row of the category board: a category plus what it did in one month.
+ *
+ * Cut server-side from the same transaction rows the reports use, so a tile can
+ * never disagree with the month report above it.
+ */
+export type CategoryBoardEntry = {
+  id: string;
+  name: string;
+  kind: FinanceKind | null;
+  type: FinanceCategoryType;
+  color: string | null;
+  icon: string | null;
+  /** Shown on the main finance page. */
+  isPinned: boolean;
+  /** Money moved this month, in whichever direction. */
+  monthValue: number;
+  /** The same figure for the month before, for the arrow on the tile. */
+  previousValue: number;
+  yearValue: number;
+  /** Closing balance — accounts only. Null for every other category. */
+  balance: number | null;
+  transactionCount: number;
+  /** True once the user has given this category an opening balance. */
+  hasOpeningBalance: boolean;
+  activeMonth: string;
 };
 
 export type FinanceTransaction = {
@@ -757,6 +843,8 @@ export type FinanceHolding = {
   currency: Currency;
   notes: string | null;
   acquired_on: string | null;
+  /** Which investment category this holding belongs to. */
+  category_id: string | null;
   created_at: string;
   updated_at: string;
 };

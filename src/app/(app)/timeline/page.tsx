@@ -3,7 +3,8 @@ import { getCalendarEvents, getReminders } from "@/lib/dal/calendar";
 import { getTasks } from "@/lib/dal/tasks";
 import { getAllMilestones } from "@/lib/dal/phases-milestones";
 import { PageHeader } from "@/components/shared/page-header";
-import { TimelineWorkspace, type TimelineItem, statusLabelOf } from "@/components/timeline/timeline-workspace";
+import { TimelineWorkspace, type TimelineItem } from "@/components/timeline/timeline-workspace";
+import { statusLabelOf } from "@/components/timeline/timeline-labels";
 
 export const metadata = {
   title: "Timeline",

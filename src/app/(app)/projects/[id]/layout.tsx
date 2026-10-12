@@ -1,5 +1,6 @@
 import { getProject } from "@/lib/dal/projects";
 import { ProjectTabs } from "@/components/projects/project-tabs";
+import { ProjectIcon } from "@/components/project-creator/icon-picker";
 import Link from "next/link";
 
 export default async function ProjectLayout({
@@ -23,8 +24,16 @@ export default async function ProjectLayout({
         </div>
         <div className="flex items-center gap-3">
           {project.icon ? (
-            <span className="flex size-9 items-center justify-center rounded-lg text-sm font-medium text-white" style={{ backgroundColor: project.color ?? "var(--primary)" }}>
-              {project.icon}
+            <span
+              aria-hidden="true"
+              className="flex size-9 items-center justify-center rounded-lg text-sm font-medium text-white"
+              style={{ backgroundColor: project.color ?? "var(--primary)" }}
+            >
+              <ProjectIcon
+                name={project.icon}
+                fallbackName={project.name}
+                className="size-5"
+              />
             </span>
           ) : null}
           <h1 className="text-xl font-semibold tracking-tight">{project.name}</h1>

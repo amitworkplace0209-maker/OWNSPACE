@@ -153,7 +153,10 @@ export function DashboardHeader({
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <Button
             variant="outline"
-            onClick={openCommandPalette}
+            // Wrapped rather than passed directly: `openCommandPalette` takes an
+            // optional query, and handing it the click event would set the search
+            // box's value to a MouseEvent.
+            onClick={() => openCommandPalette()}
             className="text-muted-foreground"
           >
             <Search />
