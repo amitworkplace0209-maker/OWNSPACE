@@ -247,6 +247,10 @@ export function pruneStaleMutations(
  * server has not acknowledged yet — those keep the optimistic value so the row
  * does not flicker back to its old state between the server response and the
  * replay.
+ *
+ * The payload is treated as the complete list for this view, so a cached row the
+ * server did not send is dropped; that is how a task deleted on another device
+ * finally disappears here. Only rows with something still queued are kept.
  */
 export function mergeServerTasks(
   cached: CachedTask[],
@@ -274,9 +278,9 @@ export function mergeServerTasks(
     );
   });
 
-  // Keep rows the server has not sent yet — they are either queued offline
-  // writes or rows the current filter excluded, and dropping them would make a
-  // task vanish the moment it stopped matching the filter.
+  // Keep rows the server has not sent yet but that still have something queued —
+  // they are offline writes the server has not seen. Anything else the payload
+  // omitted is genuinely gone.
   for (const task of cached) {
     if (seen.has(task.id)) continue;
     if (queuedByTask.has(task.id)) merged.push(task);

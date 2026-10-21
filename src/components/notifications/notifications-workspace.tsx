@@ -33,7 +33,6 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatStrip } from "@/components/shared/stat-strip";
 import { usePushSubscription } from "@/hooks/use-push-subscription";
-import { useNotificationActions } from "@/hooks/use-notification-actions";
 import { removePushSubscriptionAction, type PushDevice } from "@/lib/actions/push";
 import {
   clearAllNotificationsAction,
@@ -64,9 +63,9 @@ import type { AppNotification, NotificationType } from "@/types";
  *  3. **Actionability.** Inline read/unread and delete on each row, plus
  *     deep links into whatever the notification is about.
  *
- * Action buttons *on the notification itself* are handled elsewhere — see
- * `useNotificationActions`, which applies the Done/Snooze the user tapped on the
- * lock screen.
+ * Action buttons *on the notification itself* are handled app-wide — see
+ * `NotificationBridge`, which applies the Done/Snooze the user tapped on the
+ * lock screen, wherever they happen to be in the app when they do it.
  */
 
 const typeBadge: Record<NotificationType, string> = {
@@ -121,9 +120,6 @@ export function NotificationsWorkspace({
 
   const { permission, subscribed, subscribing, supported, subscribe, unsubscribe } =
     usePushSubscription({ onChange: () => router.refresh() });
-
-  // Applies Done / Snooze tapped on a notification outside the app.
-  useNotificationActions({ onHandled: () => router.refresh() });
 
   const selectedVisible = notifications.filter((n) => selected.has(n.id));
   const allSelected = notifications.length > 0 && selectedVisible.length === notifications.length;

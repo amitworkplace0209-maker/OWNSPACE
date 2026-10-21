@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { getAdminClient } from "@/lib/supabase/admin";
 import { getUserOrRedirect, friendlyError } from "@/lib/actions/helpers";
+import { getSiteUrl } from "@/lib/auth/site-url";
 import {
   hashMpinWithSalt,
   verifyMpin,
@@ -22,7 +24,6 @@ export type SecurityState = {
 export type SecurityStatus = {
   lockEnabled: boolean;
   hasMpin: boolean;
-  biometricEnabled: boolean;
   lockedUntil: number | null;
   failedAttempts: number;
   maxAttempts: number;
@@ -34,6 +35,10 @@ export type SecurityStatus = {
  * Returns null rather than throwing when the table is missing, so an app
  * deployed ahead of `db:migrate` behaves as "no lock configured" instead of
  * 500-ing every page — the fail-safe direction for a security feature.
+ *
+ * Read through the ordinary cookie client, which is enough: the row is
+ * readable by its owner and by nobody else, and every *write* in this file
+ * goes through the service role instead (see the note on `admin()`).
  */
 async function readSecurity(userId: string) {
   const supabase = await createClient();
@@ -52,9 +57,21 @@ async function readSecurity(userId: string) {
       mpin_salt: string | null;
       failed_attempts: number;
       locked_until: string | null;
-      biometric_enabled: boolean;
     } | null) ?? null
   );
+}
+
+/**
+ * The client that writes to `user_security`.
+ *
+ * The table's owner policy is read-only on purpose. The MPIN hash, the lock
+ * flag and the attempt counter are server-owned facts: a browser that merely
+ * holds a session must not be able to set its own hash, clear its own lockout
+ * or turn its own lock off. So every write here goes out with the service
+ * role, from the server, after the server has checked the MPIN itself.
+ */
+function admin() {
+  return getAdminClient();
 }
 
 /** What the lock screen needs on its very first paint. */
@@ -65,7 +82,6 @@ export async function getSecurityStatusAction(): Promise<SecurityStatus> {
   return {
     lockEnabled: row?.is_lock_enabled ?? false,
     hasMpin: Boolean(row?.mpin_hash && row?.mpin_salt),
-    biometricEnabled: row?.biometric_enabled ?? false,
     lockedUntil: row?.locked_until ? new Date(row.locked_until).getTime() : null,
     failedAttempts: row?.failed_attempts ?? 0,
     maxAttempts: MAX_MPIN_ATTEMPTS,
@@ -73,24 +89,22 @@ export async function getSecurityStatusAction(): Promise<SecurityStatus> {
 }
 
 /**
- * The one-time MPIN setup, run right after the very first sign-in.
+ * The one-time MPIN setup, for accounts that never chose one.
  *
- * This is deliberately the *only* place an MPIN can be created. It cannot happen
- * on the sign-up form, because at that point there is no authenticated session —
- * so the row would have to be written with service-role credentials, and the PIN
- * would have to survive a confirmation-email redirect in the clear first. Neither
- * is acceptable for a secret whose whole job is to be one.
+ * New accounts choose their MPIN on the sign-up form, where it is hashed and
+ * written in the same request that creates the account. This remains for the
+ * accounts that predate that: they have a row with no hash, and without this
+ * they would have no way to ever turn the lock on.
  *
- * Turning the lock on in the same call is the point. A user who has just chosen a
- * PIN and then has to find a switch to start using it is a user who never turns
- * it on.
+ * Turning the lock on in the same call is the point. A user who has just
+ * chosen a PIN and then has to find a switch to start using it is a user who
+ * never turns it on.
  */
 export async function completeMpinSetupAction(input: {
   mpin: string;
   confirm: string;
 }): Promise<SecurityState> {
   const user = await getUserOrRedirect();
-  const supabase = await createClient();
 
   const check = validateMpin(input.mpin);
   if (!check.ok) return { error: check.error };
@@ -98,20 +112,23 @@ export async function completeMpinSetupAction(input: {
 
   const { hash, salt } = await hashMpinWithSalt(input.mpin);
 
-  const { error } = await supabase.from("user_security").upsert(
-    {
-      user_id: user.id,
-      mpin_hash: hash,
-      mpin_salt: salt,
-      mpin_set_at: new Date().toISOString(),
-      // On, as promised. `user_preferences` keeps the existing value, so a user
-      // who had already chosen a duration keeps it.
-      is_lock_enabled: true,
-      failed_attempts: 0,
-      locked_until: null,
-    },
-    { onConflict: "user_id" }
-  );
+  const { error } = await admin()
+    .from("user_security")
+    .upsert(
+      {
+        user_id: user.id,
+        email: (user.email ?? "").toLowerCase() || null,
+        mpin_hash: hash,
+        mpin_salt: salt,
+        mpin_set_at: new Date().toISOString(),
+        // On, as promised. `user_preferences` keeps the existing value, so a user
+        // who had already chosen a duration keeps it.
+        is_lock_enabled: true,
+        failed_attempts: 0,
+        locked_until: null,
+      },
+      { onConflict: "user_id" }
+    );
 
   if (error) return { error: friendlyError(error, "Could not save your MPIN.") };
 
@@ -135,12 +152,11 @@ export async function setMpinAction(
   formData: FormData
 ): Promise<SecurityState> {
   const user = await getUserOrRedirect();
-  const supabase = await createClient();
 
   const mpin = String(formData.get("mpin") ?? "");
   const confirm = String(formData.get("confirm_mpin") ?? "");
   const current = String(formData.get("current_mpin") ?? "");
-  const lockDuration = String(formData.get("lock_duration") ?? "five");
+  const lockDuration = String(formData.get("lock_duration") ?? "closed");
   const enableLock = formData.get("enable_lock") === "on";
 
   const check = validateMpin(mpin);
@@ -169,32 +185,46 @@ export async function setMpinAction(
 
   const { hash, salt } = await hashMpinWithSalt(mpin);
 
-  const { error } = await supabase.from("user_security").upsert(
-    {
-      user_id: user.id,
-      mpin_hash: hash,
-      mpin_salt: salt,
-      mpin_set_at: new Date().toISOString(),
-      is_lock_enabled: enableLock,
-      failed_attempts: 0,
-      locked_until: null,
-    },
-    { onConflict: "user_id" }
-  );
+  const { error } = await admin()
+    .from("user_security")
+    .upsert(
+      {
+        user_id: user.id,
+        email: (user.email ?? "").toLowerCase() || null,
+        mpin_hash: hash,
+        mpin_salt: salt,
+        mpin_set_at: new Date().toISOString(),
+        is_lock_enabled: enableLock,
+        failed_attempts: 0,
+        locked_until: null,
+      },
+      { onConflict: "user_id" }
+    );
 
   if (error) return { error: friendlyError(error, "Could not save your MPIN.") };
 
-  await supabase.from("user_preferences").upsert(
-    { user_id: user.id, lock_duration: lockDuration },
-    { onConflict: "user_id" }
-  );
+  await (await createClient())
+    .from("user_preferences")
+    .upsert({ user_id: user.id, lock_duration: lockDuration }, { onConflict: "user_id" });
 
   revalidatePath("/settings");
   return { success: enableLock ? "App lock is on." : "MPIN saved." };
 }
 
 /**
- * Checks a PIN and, on success, unlocks.
+ * Checks a PIN against the account hash and, on success, unlocks.
+ *
+ * This is the *authoritative* path, not the one every unlock takes. The lock
+ * screen first checks a device-local copy of the same MPIN (see
+ * `lib/security/local-mpin.client.ts`) so an unlock works with no connection at
+ * all; this action is what runs when there is no local copy yet, or when the
+ * local one says no and the server should get the final word.
+ *
+ * That ordering matters for the lockout counter, which lives here. A device
+ * that has been re-enrolled — new phone, cleared storage — has no local copy, so
+ * a wrong MPIN here is the only thing that counts it. Going through the server
+ * in that case is what stops an attacker cycling devices to get five free
+ * guesses each.
  *
  * The attempt counter is written on *every* call, including the successful one.
  * Skipping it on success would mean a row that had failed five times locks the
@@ -202,7 +232,6 @@ export async function setMpinAction(
  */
 export async function unlockWithMpinAction(mpin: string): Promise<SecurityState> {
   const user = await getUserOrRedirect();
-  const supabase = await createClient();
 
   const row = await readSecurity(user.id);
   if (!row?.mpin_hash || !row.mpin_salt) {
@@ -229,7 +258,7 @@ export async function unlockWithMpinAction(mpin: string): Promise<SecurityState>
     const shouldLock = attempts >= MAX_MPIN_ATTEMPTS;
     const lockedUntil = shouldLock ? now + LOCKOUT_MS : null;
 
-    await supabase
+    await admin()
       .from("user_security")
       .update({ failed_attempts: attempts, locked_until: lockedUntil })
       .eq("user_id", user.id);
@@ -248,7 +277,7 @@ export async function unlockWithMpinAction(mpin: string): Promise<SecurityState>
     };
   }
 
-  await supabase
+  await admin()
     .from("user_security")
     .update({
       failed_attempts: 0,
@@ -260,17 +289,50 @@ export async function unlockWithMpinAction(mpin: string): Promise<SecurityState>
   return { success: "Unlocked." };
 }
 
+/**
+ * Records an unlock the device has already verified on its own.
+ *
+ * Called after a *local* match, where there is no PIN to hash and no answer to
+ * check — the work is already done, and this only keeps the account row honest:
+ * the attempt counter resets and `last_unlocked_at` moves. Skipping it would
+ * leave a device that unlocked offline carrying the lockout count from before
+ * it went offline, so one wrong entry afterwards would lock out someone who has
+ * not actually failed six times.
+ *
+ * It also means a correct local unlock clears an active lockout. That is the
+ * deliberate cost of unlocking without a network, and it gives up nothing: the
+ * lockout exists to slow down guessing a six-digit PIN, and whoever produced
+ * the correct PIN was never slowed by it in the first place.
+ *
+ * Deliberately takes no argument. An action that verified nothing must not be
+ * able to be talked into marking an arbitrary unlock as successful.
+ *
+ * Best-effort by nature: it is called on a path that already works without it,
+ * so a failure here is swallowed rather than surfaced.
+ */
+export async function recordLocalUnlockAction(): Promise<void> {
+  const user = await getUserOrRedirect();
+
+  await admin()
+    .from("user_security")
+    .update({
+      failed_attempts: 0,
+      locked_until: null,
+      last_unlocked_at: new Date().toISOString(),
+    })
+    .eq("user_id", user.id);
+}
+
 /** Turns the lock on or off without touching the stored MPIN. */
 export async function setLockEnabledAction(enabled: boolean): Promise<SecurityState> {
   const user = await getUserOrRedirect();
-  const supabase = await createClient();
 
   const row = await readSecurity(user.id);
   if (enabled && !row?.mpin_hash) {
     return { error: "Set an MPIN before turning the lock on." };
   }
 
-  const { error } = await supabase
+  const { error } = await admin()
     .from("user_security")
     .update({ is_lock_enabled: enabled })
     .eq("user_id", user.id);
@@ -283,9 +345,8 @@ export async function setLockEnabledAction(enabled: boolean): Promise<SecuritySt
 /** How long an unlock lasts before the lock screen comes back. */
 export async function setLockDurationAction(duration: string): Promise<SecurityState> {
   const user = await getUserOrRedirect();
-  const supabase = await createClient();
 
-  const { error } = await supabase
+  const { error } = await (await createClient())
     .from("user_preferences")
     .upsert({ user_id: user.id, lock_duration: duration }, { onConflict: "user_id" });
   if (error) return { error: friendlyError(error, "Could not save the setting.") };
@@ -305,8 +366,12 @@ export async function setLockDurationAction(duration: string): Promise<SecurityS
 export async function requestMpinResetAction(email: string): Promise<SecurityState> {
   const supabase = await createClient();
 
+  const siteUrl = await getSiteUrl();
+
   const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-    redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/settings?reset=mpin`,
+    // The `next` is URL-encoded inside the query string, so the callback route
+    // reads "/settings?reset=mpin" and not a path with a stray question mark.
+    redirectTo: `${siteUrl}/auth/callback?next=${encodeURIComponent("/settings?reset=mpin")}`,
   });
   if (error) return { error: friendlyError(error, "Could not send the email.") };
 
@@ -315,6 +380,34 @@ export async function requestMpinResetAction(email: string): Promise<SecuritySta
   return {
     success: "If that address has an account, a reset link is on its way.",
   };
+}
+
+/**
+ * Clears the MPIN so a new one can be chosen.
+ *
+ * Called after the emailed password reset, which is how somebody who has
+ * forgotten their MPIN gets back in: they prove they own the mailbox, set a
+ * new password, and the app then asks for a new MPIN. The old hash has to go,
+ * or "set a new MPIN" would be asking for the one they cannot remember.
+ */
+export async function clearMpinAfterResetAction(): Promise<SecurityState> {
+  const user = await getUserOrRedirect();
+
+  const { error } = await admin()
+    .from("user_security")
+    .update({
+      mpin_hash: null,
+      mpin_salt: null,
+      mpin_set_at: null,
+      failed_attempts: 0,
+      locked_until: null,
+    })
+    .eq("user_id", user.id);
+
+  if (error) return { error: friendlyError(error, "Could not reset your MPIN.") };
+
+  revalidatePath("/settings");
+  return { success: "Choose a new MPIN." };
 }
 
 export type { MpinValidation };

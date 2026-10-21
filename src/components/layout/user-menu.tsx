@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { signOutAction } from "@/lib/auth/actions";
+import { signOutOnDevice } from "@/lib/auth/sign-out.client";
 import { initials } from "@/lib/utils";
 import type { AppUser } from "@/types";
 
@@ -96,7 +96,10 @@ export function UserMenu({
         <DropdownMenuItem
           variant="destructive"
           onClick={() => {
-            void signOutAction();
+            // The device's own copy of the account is wiped here, in the
+            // browser, before the session goes — a server action has no
+            // IndexedDB and no localStorage to wipe.
+            void signOutOnDevice(user.id);
           }}
         >
           <LogOut /> Log out

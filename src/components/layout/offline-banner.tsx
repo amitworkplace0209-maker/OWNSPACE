@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { CloudOff, RefreshCw, Wifi } from "lucide-react";
+import { CloudOff, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useOnlineStatus } from "@/hooks/use-online-status";
@@ -21,11 +21,14 @@ import { cn } from "cn";
  *
  *   - renders nothing while online, with no layout shift when it appears;
  *   - says what still works rather than just announcing a problem;
- *   - offers a retry only on the surfaces that actually cache, rather than
- *     pretending every page is available offline.
+ *   - never claims a page is unavailable. Every route is kept on the device by
+ *     the service worker, so an offline user is looking at a real copy of the
+ *     page they asked for, and telling them otherwise would be a lie in the
+ *     other direction.
  */
 
-const OFFLINE_ROUTES = ["/tasks", "/reminders"];
+/** Pages whose rows are cached, so edits here still work offline. */
+const EDITABLE_OFFLINE = ["/tasks", "/reminders"];
 
 export function OfflineBanner() {
   const online = useOnlineStatus();
@@ -33,7 +36,7 @@ export function OfflineBanner() {
   const router = useRouter();
   const wasOffline = React.useRef(false);
 
-  const canWorkOffline = OFFLINE_ROUTES.some(
+  const editableOffline = EDITABLE_OFFLINE.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`)
   );
 
@@ -61,25 +64,18 @@ export function OfflineBanner() {
       aria-live="polite"
       className="flex items-center gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs text-warning md:px-6"
     >
-      {canWorkOffline ? (
-        <CloudOff aria-hidden="true" className="size-3.5 shrink-0" />
-      ) : (
-        <Wifi aria-hidden="true" className="size-3.5 shrink-0" />
-      )}
+      <CloudOff aria-hidden="true" className="size-3.5 shrink-0" />
 
       <span className="min-w-0 flex-1 truncate">
-        {canWorkOffline ? (
+        <span className="font-medium">You&apos;re offline.</span>{" "}
+        {editableOffline ? (
           <>
-            <span className="font-medium">You&apos;re offline.</span> Tasks and
-            reminders stay editable &mdash; changes sync when you reconnect.
+            You can keep editing &mdash; changes sync when you reconnect.
           </>
         ) : (
           <>
-            <span className="font-medium">You&apos;re offline.</span> This page
-            needs a connection.{" "}
-            <span className="hidden sm:inline">
-              Tasks and reminders are still available.
-            </span>
+            Showing the copy saved on this device.
+            <span className="hidden sm:inline"> It may not be up to date.</span>
           </>
         )}
       </span>

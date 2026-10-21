@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { completeMpinSetupAction } from "@/lib/actions/security";
+import { saveLocalMpin } from "@/lib/security/local-mpin.client";
 import { MPIN_MAX, MPIN_MIN } from "@/lib/security/mpin";
 import { cn } from "cn";
 
@@ -26,9 +27,11 @@ import { cn } from "cn";
  * happened. Settings carries the real on/off switch.
  */
 export function MpinEnrolScreen({
+  userId,
   onDone,
   onSkip,
 }: {
+  userId: string;
   onDone: () => void;
   onSkip: () => void;
 }) {
@@ -61,6 +64,11 @@ export function MpinEnrolScreen({
       setConfirm("");
       return;
     }
+
+    // The same PIN is derived on this device too, so from here on the lock
+    // screen opens with no connection. Best-effort: if this write fails the
+    // account copy still works, and the next unlock simply repairs it.
+    void saveLocalMpin(userId, mpin);
 
     onDone();
     router.refresh();

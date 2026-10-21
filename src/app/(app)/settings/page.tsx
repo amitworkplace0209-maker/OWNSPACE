@@ -20,8 +20,8 @@ import {
   AppLockSettings,
   type LockSettings,
 } from "@/components/security/app-lock-settings";
+import { DeviceUnlockSettings } from "@/components/security/device-unlock-settings";
 import { getAppLockState } from "@/lib/dal/security";
-import { listWebauthnCredentialsAction } from "@/lib/actions/security-webauthn";
 
 export const metadata: Metadata = {
   title: "Settings",
@@ -42,25 +42,17 @@ async function getAvatarUrl(path: string | null): Promise<string | null> {
 
 export default async function SettingsPage() {
   const user = await requireUser();
-  const [profile, prefs, lock, credentials] = await Promise.all([
+  const [profile, prefs, lock] = await Promise.all([
     getProfile(user.id),
     getPreferences(user.id),
     getAppLockState(),
-    listWebauthnCredentialsAction(),
   ]);
   const avatarUrl = await getAvatarUrl(profile?.avatar_url ?? null);
 
   const lockSettings: LockSettings = {
     lockEnabled: lock.is_lock_enabled,
     hasMpin: lock.hasMpin,
-    biometricEnabled: lock.biometric_enabled,
-    // Whether this browser *could* enrol is decided on the client, where
-    // `PublicKeyCredential` and `isSecureContext` actually exist. Passing true
-    // here and letting the panel check would mean a server telling a browser
-    // something only the browser knows.
-    biometricAvailable: true,
-    credentials,
-    durationId: prefs?.lock_duration ?? "five",
+    durationId: prefs?.lock_duration ?? "closed",
   };
 
   return (
@@ -132,7 +124,7 @@ export default async function SettingsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <PwaSettings />
+            <PwaSettings userId={user.id} />
           </CardContent>
         </Card>
 
@@ -164,11 +156,26 @@ export default async function SettingsPage() {
         <div>
           <h2 className="text-base font-semibold tracking-tight">Security</h2>
           <p className="text-sm text-muted-foreground">
-            Lock Ownspece behind an MPIN or your fingerprint, so someone with your phone cannot
-            read it.
+            Lock Ownspece behind a single MPIN, so someone with your phone cannot
+            read it. The same MPIN works here, on the lock screen and offline.
           </p>
         </div>
-        <AppLockSettings settings={lockSettings} />
+        <AppLockSettings settings={lockSettings} userId={user.id} />
+      </section>
+
+      {/* The device's own unlock. Separate from the account lock on purpose:
+          these two are about the machine in front of you, not about the
+          account, and they are deleted the moment you sign out. */}
+      <section id="device-unlock" className="scroll-mt-20 flex flex-col gap-3">
+        <div>
+          <h2 className="text-base font-semibold tracking-tight">This device</h2>
+          <p className="text-sm text-muted-foreground">
+            Unlock with your fingerprint, or with a PIN that stays on this
+            machine. Both are faster than typing your MPIN, and neither ever
+            leaves the device.
+          </p>
+        </div>
+        <DeviceUnlockSettings userId={user.id} />
       </section>
     </div>
   );

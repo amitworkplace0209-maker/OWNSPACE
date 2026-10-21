@@ -9,11 +9,16 @@ export const metadata = {
 };
 
 /**
- * Offline fallback.
+ * The last-resort offline page.
  *
- * Served from Cache Storage by the service worker when a navigation fails, so it
- * has to be a *static* page — no session read, no database call — and it is in
- * the proxy's public routes for the same reason.
+ * Served by the service worker when a navigation fails *and* that page has never
+ * been stored on this device. That makes this the uncommon path, not the normal
+ * one: the common path is the cached copy of the page you actually asked for.
+ *
+ * So this page says so, and points at the pages that are certainly kept, rather
+ * than presenting itself as "offline is broken". It is static on purpose — no
+ * session read, no database call — because it has to render for a signed-out
+ * visitor too, and the proxy's public routes list exists for the same reason.
  */
 export default function OfflinePage() {
   return (
@@ -28,27 +33,31 @@ export default function OfflinePage() {
       <div className="flex max-w-md flex-col gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">You&apos;re offline</h1>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Ownspece needs a connection to load new data, but your tasks and
-          reminders are kept on this device. Both stay readable and editable —
-          changes are queued and saved the moment you are back online.
+          This exact page has not been saved on this device yet. Everything else
+          is here &mdash; Ownspece keeps a copy of each page it has loaded, so
+          your workspace opens and works with no connection.
         </p>
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-2">
         <Button render={<Link href="/dashboard" />}>
-          <RefreshCw /> Try again
+          <RefreshCw /> Dashboard
         </Button>
         <Button variant="outline" render={<Link href="/tasks" />}>
           Tasks <ArrowRight />
+        </Button>
+        <Button variant="outline" render={<Link href="/notes" />}>
+          Notes <ArrowRight />
         </Button>
         <Button variant="outline" render={<Link href="/reminders" />}>
           Reminders <ArrowRight />
         </Button>
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        Ownspece keeps the last copy it loaded and syncs your changes when the
-        connection returns — nothing you do offline is lost.
+      <p className="max-w-md text-xs text-muted-foreground">
+        Reconnect once and Ownspece will save the whole app to this device
+        automatically. Tasks and reminders can also be edited offline — changes
+        are queued and synced the moment you are back.
       </p>
     </main>
   );

@@ -5,13 +5,10 @@ import { useActionState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
-  AlertTriangle,
-  Fingerprint,
   KeyRound,
-  Loader2,
   Lock,
   ShieldCheck,
-  Trash2,
+  Smartphone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,28 +27,37 @@ import {
   setMpinAction,
   type SecurityState,
 } from "@/lib/actions/security";
-import { deleteWebauthnCredentialAction } from "@/lib/actions/security-webauthn";
+import {
+  hasLocalMpin,
+  saveLocalMpin,
+  subscribeToLocalMpin,
+} from "@/lib/security/local-mpin.client";
 import { LOCK_DURATIONS, MPIN_MAX, MPIN_MIN } from "@/lib/security/mpin";
 import { cn } from "cn";
 
 export type LockSettings = {
   lockEnabled: boolean;
   hasMpin: boolean;
-  biometricEnabled: boolean;
-  biometricAvailable: boolean;
-  credentials: Array<{ id: string; label: string | null; createdAt: string }>;
   durationId: string;
 };
 
 /**
  * The app-lock panel.
  *
- * Writes the MPIN and turns the lock on separately on purpose: someone may want
- * a PIN stored for later without wanting to be locked out of their own app the
- * moment they close this dialog, and a single "save" that did both would make
- * that impossible to express.
+ * One MPIN, one place. There is no biometric switch and no second "app PIN"
+ * here — the account's MPIN *is* the lock, and this panel is the only place it
+ * is ever changed. What this device additionally keeps is a copy for offline
+ * unlocks, and that copy is listed here as a fact about this machine rather
+ * than as a setting, because it follows the MPIN automatically.
  */
-export function AppLockSettings({ settings }: { settings: LockSettings }) {
+export function AppLockSettings({
+  settings,
+  userId,
+}: {
+  settings: LockSettings;
+  /** Scopes the device-local MPIN copy to this account. */
+  userId: string;
+}) {
   const router = useRouter();
   const [state, formAction, pending] = useActionState<SecurityState, FormData>(
     setMpinAction,
@@ -59,18 +65,34 @@ export function AppLockSettings({ settings }: { settings: LockSettings }) {
   );
   const [toggling, startToggle] = useTransition();
   const [confirmOff, setConfirmOff] = React.useState(false);
-  const [removing, setRemoving] = React.useState<{ id: string; label: string } | null>(null);
   const [mpin, setMpin] = React.useState("");
   const [confirm, setConfirm] = React.useState("");
   const [current, setCurrent] = React.useState("");
 
-  const [enrolling, setEnrolling] = React.useState(false);
+  /**
+   * Whether this device already holds a usable copy of the account's MPIN.
+   *
+   * An external store rather than `useState` set from an effect: the answer is
+   * a fact about `localStorage`, which does not exist on the server, so the
+   * server snapshot has to be a fixed `false` or hydration fails. That is the
+   * same shape the unlock token uses, and for the same reason.
+   */
+  const storedHere = React.useSyncExternalStore(
+    subscribeToLocalMpin,
+    () => hasLocalMpin(userId),
+    () => false
+  );
 
   // The success message is the signal that the form is finished with, so it is
   // tracked by value: `useActionState` hands back the *same* object on unrelated
   // re-renders, and an effect keyed on the object identity would fire the toast
   // again every time the panel re-rendered.
   const [handledSuccess, setHandledSuccess] = React.useState<string | null>(null);
+
+  // The MPIN that produced the success, kept because the boxes below are
+  // cleared in the same pass that notices it. Without this the device-local copy
+  // would be re-derived from an empty string.
+  const [savedMpin, setSavedMpin] = React.useState("");
 
   // Clearing the boxes during render rather than in an effect. This is React's
   // "adjust state when a prop changes" pattern: comparing against the previously
@@ -79,6 +101,7 @@ export function AppLockSettings({ settings }: { settings: LockSettings }) {
   // field that is about to be emptied underneath them.
   if (state?.success && state.success !== handledSuccess) {
     setHandledSuccess(state.success);
+    setSavedMpin(mpin);
     setMpin("");
     setConfirm("");
     setCurrent("");
@@ -87,8 +110,17 @@ export function AppLockSettings({ settings }: { settings: LockSettings }) {
   React.useEffect(() => {
     if (!state?.success || state.success === handledSuccess) return;
     toast.success(state.success);
+
+    // Keep this device's copy in step with the account. The same number, the
+    // same place, written whenever it changes — which is what makes the MPIN
+    // genuinely identical everywhere instead of "the account's MPIN, plus
+    // whatever this phone happens to think it is".
+    if (savedMpin) {
+      void saveLocalMpin(userId, savedMpin);
+    }
+
     router.refresh();
-  }, [state, handledSuccess, router]);
+  }, [state, handledSuccess, savedMpin, userId, router]);
 
   // Mirrors the live strength into a hint rather than a rule: the digit count is
   // known from the box, and scrypt is doing the actual work.
@@ -184,6 +216,11 @@ export function AppLockSettings({ settings }: { settings: LockSettings }) {
                   </button>
                 ))}
               </div>
+              <p className="text-xs text-muted-foreground">
+                The app always locks when it is closed or sent to the background,
+                whatever this is set to. This only says how long it stays open
+                while you are using it.
+              </p>
             </FormField>
           ) : null}
         </CardContent>
@@ -276,67 +313,38 @@ export function AppLockSettings({ settings }: { settings: LockSettings }) {
         </CardContent>
       </Card>
 
-      {/* --- Biometric ------------------------------------------------------ */}
+      {/* --- This device ------------------------------------------------------ */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
-            <Fingerprint className="size-4 text-muted-foreground" />
-            Biometric unlock
+            <Smartphone className="size-4 text-muted-foreground" />
+            Offline unlock on this device
           </CardTitle>
           <CardDescription>
-            Use your fingerprint or face instead of typing. The private key never leaves this device —
-            only a public key is stored.
+            Ownspece keeps a derived copy of the same MPIN on this device, so the
+            lock screen opens without a connection. It is written whenever the MPIN
+            changes, and removed when you sign out.
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          {!settings.biometricAvailable ? (
-            <p className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground">
-              <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning" />
-              This browser has no fingerprint or face unlock available. It needs HTTPS, and on desktop
-              it usually means Windows Hello or a Mac with Touch ID.
-            </p>
-          ) : null}
-
-          {settings.credentials.length > 0 ? (
-            <ul className="flex flex-col gap-1.5">
-              {settings.credentials.map((credential) => (
-                <li
-                  key={credential.id}
-                  className="flex items-center gap-3 rounded-lg border p-3 transition hover:border-destructive/40"
-                >
-                  <ShieldCheck className="size-4 shrink-0 text-success" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">
-                      {credential.label ?? "This device"}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Enrolled {new Date(credential.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={`Remove ${credential.label ?? "this device"}`}
-                    onClick={() =>
-                      setRemoving({ id: credential.id, label: credential.label ?? "this device" })
-                    }
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-
-          <div className="flex justify-end">
-            <Button
-              variant="outline"
-              disabled={!settings.biometricAvailable || enrolling}
-              onClick={() => setEnrolling(true)}
-            >
-              {enrolling ? <Loader2 className="size-4 animate-spin" /> : <Fingerprint className="size-4" />}
-              {settings.credentials.length > 0 ? "Enrol another device" : "Turn on biometric unlock"}
-            </Button>
+        <CardContent>
+          <div className="flex items-center gap-3 rounded-lg border p-3">
+            <ShieldCheck
+              aria-hidden="true"
+              className={cn(
+                "size-4 shrink-0",
+                storedHere ? "text-success" : "text-muted-foreground"
+              )}
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">
+                {storedHere ? "Ready to unlock offline" : "Not stored on this device"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {storedHere
+                  ? "Typing your MPIN opens the app with no network at all."
+                  : "Sign in once while online and enter your MPIN here, and it will be kept here."}
+              </p>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -357,37 +365,6 @@ export function AppLockSettings({ settings }: { settings: LockSettings }) {
           }
         }}
       />
-
-      <ConfirmDialog
-        open={Boolean(removing)}
-        onOpenChange={(open) => !open && setRemoving(null)}
-        title={`Remove ${removing?.label ?? "this device"}?`}
-        description="That device will have to type your MPIN instead. Other devices keep their own."
-        confirmLabel="Remove"
-        onConfirm={async () => {
-          if (!removing) return;
-          const target = removing;
-          setRemoving(null);
-          const result = await deleteWebauthnCredentialAction(target.id);
-          if (result.error) toast.error(result.error);
-          else {
-            toast.success("Device removed.");
-            router.refresh();
-          }
-        }}
-      />
-
-      {/* Declared so the enrolment intent survives the browser's own prompt,
-          which navigates nothing but does tear down client state on some
-          browsers. */}
-      {enrolling ? (
-        <WebAuthnEnroller
-          onDone={() => {
-            setEnrolling(false);
-            router.refresh();
-          }}
-        />
-      ) : null}
     </div>
   );
 }
@@ -414,47 +391,6 @@ function StrengthMeter({ strength }: { strength: "none" | "weak" | "strong" }) {
       <span className="text-[11px] text-muted-foreground">
         {strength === "strong" ? "Good length" : strength === "weak" ? "Six digits or more is better" : ""}
       </span>
-    </div>
-  );
-}
-
-/** Enrols this browser's authenticator. Split out so the panel above stays readable. */
-function WebAuthnEnroller({ onDone }: { onDone: () => void }) {
-  const router = useRouter();
-  React.useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      const { beginWebauthnEnrolment } = await import("@/lib/security/webauthn.client");
-      const result = await beginWebauthnEnrolment();
-      if (cancelled) return;
-
-      if (result.ok) {
-        toast.success("Biometric unlock is on for this device.");
-      } else if (result.error === "cancelled") {
-        // Pressing Cancel is not a failure and should not look like one.
-        toast.info("Enrolment cancelled.");
-      } else {
-        toast.error(result.error);
-      }
-
-      onDone();
-      router.refresh();
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [onDone, router]);
-
-  return (
-    <div className="fixed inset-0 z-100 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-      <div className="flex flex-col items-center gap-3 text-center">
-        <Fingerprint className="size-8 animate-pulse text-primary" />
-        <p className="text-sm text-muted-foreground">
-          Follow your device&apos;s prompt to enrol…
-        </p>
-      </div>
     </div>
   );
 }

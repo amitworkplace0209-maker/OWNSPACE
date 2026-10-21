@@ -6,11 +6,21 @@ import { requireUser } from "@/lib/dal";
 
 export type AppLockState = {
   is_lock_enabled: boolean;
-  biometric_enabled: boolean;
   hasMpin: boolean;
   /** True when the account has never chosen a PIN — the one-time setup. */
   setup_required: boolean;
 };
+
+/**
+ * PostgREST's code for "relation does not exist".
+ *
+ * Recognised rather than treated as any other error because the two need
+ * opposite answers. A missing row is a new account, which owes the one-time MPIN
+ * setup. A missing *table* is a deployment that has not run `db:migrate`, and
+ * asking every user of that deployment to set a PIN they cannot then use would
+ * be worse than the failure being silent.
+ */
+const UNDEFINED_TABLE_CODES = new Set(["42P01", "PGRST205", "PGRST200"]);
 
 /**
  * Whether this account's app lock is on.
@@ -31,14 +41,23 @@ export const getAppLockState = cache(async (): Promise<AppLockState> => {
 
   const { data, error } = await supabase
     .from("user_security")
-    .select("is_lock_enabled, biometric_enabled, mpin_hash")
+    .select("is_lock_enabled, mpin_hash")
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (error || !data) {
+  if (error) {
     return {
       is_lock_enabled: false,
-      biometric_enabled: false,
+      hasMpin: false,
+      // An unmigrated database is not an account that has never set a PIN, so
+      // the setup screen is skipped rather than shown to everyone on every page.
+      setup_required: !UNDEFINED_TABLE_CODES.has(error.code ?? ""),
+    };
+  }
+
+  if (!data) {
+    return {
+      is_lock_enabled: false,
       hasMpin: false,
       // No row means a brand-new account, which is exactly the case where the
       // one-time setup is owed — so absence means "not yet set up", not "skip it".
@@ -48,13 +67,11 @@ export const getAppLockState = cache(async (): Promise<AppLockState> => {
 
   const row = data as {
     is_lock_enabled: boolean;
-    biometric_enabled: boolean;
     mpin_hash: string | null;
   };
 
   return {
     is_lock_enabled: row.is_lock_enabled,
-    biometric_enabled: row.biometric_enabled,
     hasMpin: Boolean(row.mpin_hash),
     setup_required: !row.mpin_hash,
   };

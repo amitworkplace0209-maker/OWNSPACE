@@ -7,17 +7,23 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { signUpAction, type AuthState } from "@/lib/auth/actions";
 import { SubmitButton } from "@/components/auth/submit-button";
+import { MPIN_MAX, MPIN_MIN } from "@/lib/security/mpin";
 
 /**
  * Create an account.
  *
- * The MPIN is set on the *first sign-in*, not here, and the note below says so
- * rather than leaving people wondering where it went. The reason is not a
- * preference: at this point there is no authenticated session, so an MPIN chosen
- * here would have to be carried through the confirmation email in the clear and
- * written by a privileged server. A secret that crosses an unverified channel is
- * worse than one that is asked for a moment later, from inside an app the user
- * has already proved they own.
+ * Four things are asked for, and each of them has a job:
+ *
+ *  - **Name** — what people and reminders are addressed by.
+ *  - **Email** — where the confirmation and the reset link go.
+ *  - **Password** — the recovery secret. The reset email changes it, so it is
+ *    what gets somebody back in after they have forgotten their MPIN.
+ *  - **MPIN** — the number the app asks for every time it opens, and the one
+ *    the sign-in form accepts in place of the password.
+ *
+ * The MPIN is asked for here rather than after the first sign-in because it is
+ * part of making an account, not a setting to find later. It is hashed on the
+ * server before it is stored and never written down anywhere in the clear.
  */
 export function SignUpForm() {
   const [state, formAction] = useActionState<AuthState, FormData>(signUpAction, {});
@@ -55,6 +61,7 @@ export function SignUpForm() {
           placeholder="Ada Lovelace"
           maxLength={60}
           className="h-11 transition-all duration-200 focus-visible:ring-3"
+          required
         />
       </div>
 
@@ -86,6 +93,9 @@ export function SignUpForm() {
           className="h-11 transition-all duration-200 focus-visible:ring-3"
           required
         />
+        <p className="text-xs text-muted-foreground">
+          Used to recover your account if you forget your MPIN.
+        </p>
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -102,11 +112,46 @@ export function SignUpForm() {
         />
       </div>
 
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="mpin">MPIN</Label>
+        <Input
+          id="mpin"
+          name="mpin"
+          type="password"
+          inputMode="numeric"
+          autoComplete="off"
+          maxLength={MPIN_MAX}
+          placeholder="••••••"
+          className="h-11 text-center text-lg tracking-[0.5em] transition-all duration-200 focus-visible:ring-3"
+          required
+        />
+        <p className="text-xs text-muted-foreground">
+          {MPIN_MIN}–{MPIN_MAX} digits. This is what unlocks Ownspece, and what
+          you sign in with.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="confirm_mpin">Confirm MPIN</Label>
+        <Input
+          id="confirm_mpin"
+          name="confirm_mpin"
+          type="password"
+          inputMode="numeric"
+          autoComplete="off"
+          maxLength={MPIN_MAX}
+          placeholder="••••••"
+          className="h-11 text-center text-lg tracking-[0.5em] transition-all duration-200 focus-visible:ring-3"
+          required
+        />
+      </div>
+
       <p className="flex items-start gap-1.5 rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
         <ShieldCheck className="mt-0.5 size-3.5 shrink-0" />
         <span>
-          After you sign in, you&apos;ll set an MPIN and an app lock — so nobody with your
-          phone can read your workspace.
+          Your MPIN is stored as a salted hash. Ownspece asks for it every time
+          it opens, so nobody with your phone can read your notes, tasks and
+          money.
         </span>
       </p>
 

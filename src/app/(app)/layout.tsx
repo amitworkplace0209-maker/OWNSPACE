@@ -7,10 +7,13 @@ import { CommandPalette } from "@/components/layout/command-palette";
 import { ReminderNotifier } from "@/components/reminders/reminder-notifier";
 import { LockedApp } from "@/components/security/locked-app";
 import { AppearanceManager } from "@/components/providers/appearance-manager";
+import { OfflineShell } from "@/components/providers/offline-shell";
+import { NotificationBridge } from "@/components/providers/notification-bridge";
 import { requireUser, getProfile, getPreferences } from "@/lib/dal";
 import { getNotificationCenterData } from "@/lib/dal/notifications";
 import { getFireableReminders } from "@/lib/dal/reminders";
 import { getAppLockState } from "@/lib/dal/security";
+import { hasUnlockGrant } from "@/lib/auth/unlock-grant.server";
 import { lockDurationMs } from "@/lib/security/mpin";
 import {
   DEFAULT_ACCENT,
@@ -32,17 +35,20 @@ export default async function AppLayout({
 
   // Both in flight together: three sequential awaits would make every navigation
   // in the app pay for three round trips in series.
-  const [notificationData, fireableReminders, security] = await Promise.all([
+  const [notificationData, fireableReminders, security, signedInGrant] = await Promise.all([
     getNotificationCenterData({ limit: 5 }),
     getFireableReminders(),
     getAppLockState(),
+    // Whether this session has just proved the MPIN by signing in. Read on the
+    // server so the first paint is already right and the lock screen never
+    // flashes on the way in.
+    hasUnlockGrant(user.id),
   ]);
 
   // The lock state, read once here rather than inside the client gate: the very
   // first paint already knows whether a lock exists, so the app never flashes
   // its contents before the lock screen covers them.
   const lockEnabled = security.is_lock_enabled;
-  const biometricEnabled = security.biometric_enabled;
   const setupRequired = security.setup_required;
 
   const sessionUser: AppUser = {
@@ -60,11 +66,20 @@ export default async function AppLayout({
   };
 
   return (
-    <LockedApp
+    <>
+{/* Outside the lock, not inside it. This tells the worker whose pages it may
+        serve, and a user who has just typed their MPIN offline needs that to be
+        already true before the app draws. Renders nothing. */}
+<OfflineShell userId={user.id} />
+{/* Also outside the lock: a reminder acted on from a notification has to be
+    applied whether or not the workspace behind the lock is open. */}
+<NotificationBridge unreadCount={notificationData.unreadCount} />
+<LockedApp
       lockEnabled={lockEnabled}
       setupRequired={setupRequired}
-      biometricEnabled={biometricEnabled}
+      userId={user.id}
       durationMs={lockDurationMs(prefs?.lock_duration)}
+      signedInGrant={signedInGrant}
     >
     <SidebarProvider>
       <AppearanceManager appearance={appearance} updatedAt={prefs?.updated_at} />
@@ -103,5 +118,6 @@ export default async function AppLayout({
       <ReminderNotifier reminders={fireableReminders} userId={user.id} />
     </SidebarProvider>
     </LockedApp>
+    </>
   );
 }

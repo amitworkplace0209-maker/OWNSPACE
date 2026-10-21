@@ -13,7 +13,7 @@ export default async function NotesPage({
 }: {
   searchParams: Promise<{ project?: string; tag?: string; q?: string }>;
 }) {
-  await requireUser();
+  const user = await requireUser();
   const params = await searchParams;
 
   const projectId = params.project ?? "";
@@ -36,11 +36,12 @@ export default async function NotesPage({
         description="Ideas, scratchpads and references — personal or filed under a project."
       />
       <NotesWorkspace
-        notes={notes}
+        serverNotes={notes}
         stats={stats}
         projects={projects}
         tags={tags}
         nodes={nodes}
+        userId={user.id}
         initialProjectId={projectId}
         initialTag={tag}
         initialQuery={query}

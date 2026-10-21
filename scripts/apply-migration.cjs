@@ -114,13 +114,59 @@ const PROBES = {
   "027_category_pins.sql": `select 1 from information_schema.columns
                               where table_schema='public' and table_name='finance_categories'
                                 and column_name='is_pinned'`,
-  // Probed on `webauthn_challenges`, the last table this migration creates.
-  // Probing an earlier one would report the file as applied and skip the
-  // challenge table on a database that already had the credentials table —
-  // which is exactly what happened when this probe was first written against
-  // `webauthn_credentials` and the challenge table was added afterwards.
-  "028_security_mpin_biometric.sql": `select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace
-                                      where n.nspname='public' and c.relname='webauthn_challenges'`,
+  // Probed on `user_security` *and* `user_preferences.lock_duration` — both
+  // created here, and neither touched by 029, which drops the WebAuthn tables.
+  //
+  // Probing `webauthn_challenges` (as this used to) looked correct and was not:
+  // 029 removes that table, so this file reported itself pending on every single
+  // migrate afterwards, and re-running it *recreated* the two tables 029 had
+  // just dropped — silently undoing the removal on every migrate. A probe has to
+  // point at something the migrations after it will still leave alone.
+  //
+  // Both objects are listed rather than one because this file creates several.
+  // The lesson from the original bug — the challenge table was added to this
+  // file after it had already been applied, and an earlier probe hid that — is
+  // that a probe covers one object, so a file adding more needs more.
+  "028_security_mpin_biometric.sql": `select 1
+                                         from pg_class c
+                                         join pg_namespace n on n.oid = c.relnamespace
+                                        where n.nspname = 'public' and c.relname = 'user_security'
+                                          and exists (
+                                            select 1 from information_schema.columns
+                                             where table_schema = 'public'
+                                               and table_name = 'user_preferences'
+                                               and column_name = 'lock_duration')`,
+  // A migration that only ever *removes* things cannot probe for something it
+  // creates. So this probes for the absence of all three objects instead, which
+  // is the same answer whichever way the file got there: either 029 ran and took
+  // them, or 028 never ran on this database and there was nothing to take.
+  //
+  // Probing `user_security` instead would be the trap the 028 probe fell into:
+  // a database that never ran 028 has no `user_security` either, so the probe
+  // would never fire and the file would be re-applied on every single migrate.
+  "029_security_mpin_only.sql": `select 1
+                                    where not exists (
+                                      select 1 from information_schema.tables
+                                      where table_schema='public'
+                                        and table_name='webauthn_credentials')
+                                      and not exists (
+                                      select 1 from information_schema.tables
+                                      where table_schema='public'
+                                        and table_name='webauthn_challenges')
+                                      and not exists (
+                                      select 1 from information_schema.columns
+                                      where table_schema='public'
+                                        and table_name='user_security'
+                                        and column_name='biometric_enabled')`,
+  // Probed on the column this migration adds. The lock-duration constraint is
+  // dropped and re-created here, so it cannot be used as a probe: it would
+  // report the migration as applied on a database where the constraint was
+  // changed by hand and the column was never added.
+  "030_login_mpin.sql": `select 1
+                            from information_schema.columns
+                           where table_schema='public'
+                             and table_name='user_security'
+                             and column_name='email'`,
 };
 
 async function isApplied(client, file) {

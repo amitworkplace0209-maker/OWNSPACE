@@ -83,6 +83,48 @@ export async function updateNoteAction(
   return { data: { id: noteId } };
 }
 
+/**
+ * Sets the pin and favourite flags to an absolute value.
+ *
+ * Deliberately not a toggle. The toggle actions are what the UI calls with a
+ * connection, where the server's current value is what the user saw. An offline
+ * queue is replayed minutes or hours later, possibly after the row was toggled
+ * elsewhere — replaying a *toggle* there would invert whatever the server holds
+ * now, which is how a note ends up pinned because somebody unstarred it on
+ * another device.
+ *
+ * An absolute value converges instead: the user's intent is what is written,
+ * whatever happened in between.
+ *
+ * Only the two flags are accepted. Note content goes through `updateNoteAction`,
+ * which versions the previous body and validates the whole form — neither of
+ * which belongs in a blind field write.
+ */
+export async function setNoteFlagsAction(
+  noteId: string,
+  flags: { is_pinned?: boolean; is_favorited?: boolean }
+): Promise<{ error?: string }> {
+  const user = await getUserOrRedirect();
+
+  const patch: Record<string, boolean> = {};
+  if (typeof flags.is_pinned === "boolean") patch.is_pinned = flags.is_pinned;
+  if (typeof flags.is_favorited === "boolean") patch.is_favorited = flags.is_favorited;
+
+  if (Object.keys(patch).length === 0) return { error: "Nothing to change." };
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("notes")
+    .update(patch)
+    .eq("user_id", user.id)
+    .eq("id", noteId);
+
+  if (error) return { error: friendlyError(error, "Could not update the note.") };
+
+  revalidateNotePaths(noteId);
+  return {};
+}
+
 export async function deleteNoteAction(noteId: string): Promise<{ error?: string }> {
   const user = await getUserOrRedirect();
   const supabase = await createClient();

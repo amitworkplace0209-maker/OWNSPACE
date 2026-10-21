@@ -1,4 +1,5 @@
 import { getProject } from "@/lib/dal/projects";
+import { requireUser } from "@/lib/dal";
 import { getNoteDashboard, getNoteNodes, getNoteTags } from "@/lib/dal/notes";
 import { ProjectSection } from "@/components/projects/project-section";
 import { NotesWorkspace } from "@/components/notes/notes-workspace";
@@ -19,6 +20,7 @@ export default async function ProjectNotesPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const user = await requireUser();
   const { id } = await params;
   const project = await getProject(id);
 
@@ -31,11 +33,12 @@ export default async function ProjectNotesPage({
   return (
     <ProjectSection title="Notes" description="Notes attached to this project.">
       <NotesWorkspace
-        notes={notes}
+        serverNotes={notes}
         stats={stats}
         projects={[project]}
         tags={tags}
         nodes={nodes}
+        userId={user.id}
         initialProjectId={id}
         readOnly={project.status === "archived"}
       />

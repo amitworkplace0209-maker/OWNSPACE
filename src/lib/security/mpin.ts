@@ -106,6 +106,33 @@ export const MAX_MPIN_ATTEMPTS = 6;
 /** How long a lockout lasts. Long enough to stop a script, short enough to forgive a real slip. */
 export const LOCKOUT_MS = 15 * 60 * 1000;
 
+/**
+ * The one number every unlock path agrees on.
+ *
+ * A dummy PIN, hashed once per process and kept in memory. Verifying a
+ * submitted MPIN against it costs exactly as much as verifying it against the
+ * real one, which is the point: without it, a sign-in for an address that does
+ * not exist returns in a millisecond while a sign-in for an address that does
+ * takes a quarter of a second, and the difference is a free test for whether
+ * somebody has an account here.
+ */
+const BURN_PIN = "00000000";
+let burnDigest: { hash: string; salt: string } | null = null;
+
+/**
+ * Spends the same time a real verification would.
+ *
+ * Called on every path that does *not* verify a real MPIN — an unknown
+ * address, a locked-out account — so that all three take the same shape from
+ * the outside.
+ */
+export async function burnVerificationTime(): Promise<void> {
+  if (!burnDigest) {
+    burnDigest = await hashMpinWithSalt(BURN_PIN);
+  }
+  await verifyMpin(BURN_PIN, burnDigest.hash, burnDigest.salt);
+}
+
 export type MpinValidation = { ok: true } | { ok: false; error: string };
 
 /**
@@ -158,21 +185,40 @@ export function isSequential(value: string): boolean {
   return ascending || descending;
 }
 
-/** How long an unlock lasts before the app re-locks, per the user's setting. */
+/**
+ * How long an unlock lasts before the app re-locks, per the user's setting.
+ *
+ * "When the app is closed" is the default and the important one: an app that
+ * stays unlocked after it has been closed is not locked at all. It maps to
+ * infinity because there is no timer for it — the lock comes from the app
+ * disappearing, not from a clock — and the gate treats infinity as "lock on
+ * the way out" rather than "never lock".
+ *
+ * "Until I sign out" is deliberately absent. It was the one setting that made
+ * the lock decorative: the app stayed open for as long as the tab lived, which
+ * on a phone means "for as long as the phone is on".
+ */
 export const LOCK_DURATIONS = [
-  { id: "immediately", label: "Immediately", ms: 0 },
+  { id: "closed", label: "When the app is closed", ms: Number.POSITIVE_INFINITY },
   { id: "minute", label: "After 1 minute", ms: 60_000 },
   { id: "five", label: "After 5 minutes", ms: 5 * 60_000 },
   { id: "fifteen", label: "After 15 minutes", ms: 15 * 60_000 },
   { id: "hour", label: "After 1 hour", ms: 60 * 60_000 },
-  { id: "session", label: "Until I sign out", ms: Number.POSITIVE_INFINITY },
 ] as const;
 
 export type LockDurationId = (typeof LOCK_DURATIONS)[number]["id"];
 
+/**
+ * The duration behind a stored id.
+ *
+ * An unknown id — a value written by an older version of the app, or by hand —
+ * falls back to "closed", the strictest of the settings. A fallback to five
+ * minutes would be the friendlier choice and the wrong one: an id nobody
+ * recognises should not quietly decide how long a locked workspace stays open.
+ */
 export function lockDurationMs(id: string | null | undefined): number {
   return (
     LOCK_DURATIONS.find((entry) => entry.id === id)?.ms ??
-    LOCK_DURATIONS.find((entry) => entry.id === "five")!.ms
+    LOCK_DURATIONS.find((entry) => entry.id === "closed")!.ms
   );
 }

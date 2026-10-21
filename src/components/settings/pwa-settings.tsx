@@ -6,21 +6,31 @@ import {
   Database,
   Download,
   HardDriveDownload,
+  Loader2,
   MonitorSmartphone,
-  Share,
-  PlusSquare,
   RefreshCw,
+  Share,
   Smartphone,
+  PlusSquare,
   Trash2,
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { usePwaInstall } from "@/hooks/use-pwa-install";
 import { clearReminderCache, readReminderCache, readActiveReminderUser } from "@/lib/offline/reminder-cache.client";
 import { clearTaskCache, readTaskCache, readActiveUser } from "@/lib/offline/task-cache.client";
+import {
+  clearShell,
+  readShellEntryCount,
+  readShellPreference,
+  setShellEnabled,
+  warmShell,
+} from "@/lib/offline/shell-client";
+import { SHELL_ROUTES } from "@/lib/offline/shell-cache";
 import { NotificationSettingsButton } from "@/components/reminders/notification-settings";
 import { cn } from "cn";
 
@@ -48,27 +58,43 @@ const EMPTY_CACHE: CacheState = {
   remindersCachedAt: null,
 };
 
-export function PwaSettings() {
+export function PwaSettings({ userId }: { userId: string }) {
   const { canInstall, isInstalled, needsIosHelp, promptInstall } = usePwaInstall();
   const [cache, setCache] = React.useState<CacheState>(EMPTY_CACHE);
   const [clearing, setClearing] = React.useState(false);
   const [confirmClear, setConfirmClear] = React.useState(false);
 
   /**
-   * The cache counts come from IndexedDB, which cannot be read during render —
-   * so they are read once on mount. Nothing here sets state synchronously in an
-   * effect body; the async read resolves into a later render.
+   * The whole-app copy. `null` for the page count means "this browser cannot
+   * hold one" — no service worker, or a private window — which is a different
+   * state from "held nothing yet" and must not be shown as the latter.
+   */
+  const [shellPages, setShellPages] = React.useState<number | null>(null);
+  const [shellOn, setShellOn] = React.useState(true);
+  const [shellSavedAt, setShellSavedAt] = React.useState<string | null>(null);
+  const [warming, setWarming] = React.useState(false);
+
+  /**
+   * The counts come from IndexedDB and from the service worker, neither of which
+   * can be read during render — so they are read once on mount. Nothing here
+   * sets state synchronously in an effect body; the async reads resolve into a
+   * later render.
    */
   React.useEffect(() => {
     let cancelled = false;
 
     void (async () => {
-      const taskUserId = readActiveUser();
-      const reminderUserId = readActiveReminderUser();
+      // The remembered user is a fallback for a shell that rendered before any
+      // cache was written: on a fresh account there is no marker yet, and the
+      // account this panel is for is the only one that could be meant.
+      const taskUserId = readActiveUser() ?? userId;
+      const reminderUserId = readActiveReminderUser() ?? userId;
+      const preference = readShellPreference(userId);
 
-      const [taskSnapshot, reminderSnapshot] = await Promise.all([
-        taskUserId ? readTaskCache(taskUserId) : Promise.resolve(null),
-        reminderUserId ? readReminderCache(reminderUserId) : Promise.resolve(null),
+      const [taskSnapshot, reminderSnapshot, pages] = await Promise.all([
+        readTaskCache(taskUserId),
+        readReminderCache(reminderUserId),
+        readShellEntryCount(userId),
       ]);
 
       if (cancelled) return;
@@ -78,26 +104,71 @@ export function PwaSettings() {
         reminders: reminderSnapshot?.reminders.length ?? 0,
         remindersCachedAt: reminderSnapshot?.cachedAt ?? null,
       });
+      setShellPages(pages);
+      setShellOn(preference.enabled);
+      setShellSavedAt(
+        preference.lastWarmedAt === null ? null : new Date(preference.lastWarmedAt).toISOString()
+      );
     })();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [userId]);
+
+  async function refreshOfflineCopy() {
+    setWarming(true);
+    try {
+      const result = await warmShell({ userId, routes: SHELL_ROUTES, force: true });
+      if (!result) {
+        // No reply from the worker: the pass did not finish. It will be retried
+        // on the next load, so this is not a failure the user needs to act on —
+        // and saying "this browser cannot store the app" here would be a
+        // confident false statement about a device that probably can.
+        toast.error("The offline copy did not finish saving. Try again in a moment.");
+        return;
+      }
+      setShellSavedAt(new Date().toISOString());
+      setShellPages(await readShellEntryCount(userId));
+      toast.success(
+        result.skipped
+          ? "This app is already saved on this device."
+          : `Saved ${result.stored} page${result.stored === 1 ? "" : "s"} for offline use.`
+      );
+    } finally {
+      setWarming(false);
+    }
+  }
+
+  async function toggleShell(enabled: boolean) {
+    setShellOn(enabled);
+    const preference = await setShellEnabled(userId, enabled);
+    setShellSavedAt(
+      preference.lastWarmedAt === null ? null : new Date(preference.lastWarmedAt).toISOString()
+    );
+    if (enabled) void refreshOfflineCopy();
+    else setShellPages(0);
+  }
 
   async function clearOfflineData() {
     setClearing(true);
     try {
-      const taskUserId = readActiveUser();
-      const reminderUserId = readActiveReminderUser();
+      const taskUserId = readActiveUser() ?? userId;
+      const reminderUserId = readActiveReminderUser() ?? userId;
 
-      // Both caches are namespaced by user id, so signing out has to clear both
-      // or a shared machine would serve the previous account's titles to the
-      // next person who signs in.
-      if (taskUserId) await clearTaskCache(taskUserId);
-      if (reminderUserId) await clearReminderCache(reminderUserId);
+      // Every one of these is namespaced by user id, so signing out has to clear
+      // all of them — or a shared machine would serve the previous account's
+      // pages and titles to the next person who signs in.
+      await Promise.all([
+        clearTaskCache(taskUserId),
+        clearReminderCache(reminderUserId),
+        clearShell(userId),
+      ]);
 
       setCache(EMPTY_CACHE);
+      setShellPages(0);
+      setShellSavedAt(null);
+      setShellOn(true);
       toast.success("Offline data cleared from this device.");
     } catch {
       toast.error("Could not clear the offline data.");
@@ -107,7 +178,7 @@ export function PwaSettings() {
     }
   }
 
-  const hasCache = cache.tasks > 0 || cache.reminders > 0;
+  const hasCache = cache.tasks > 0 || cache.reminders > 0 || (shellPages ?? 0) > 0;
   const oldest = [cache.tasksCachedAt, cache.remindersCachedAt]
     .filter((value): value is string => Boolean(value))
     .sort()[0] ?? null;
@@ -177,6 +248,60 @@ export function PwaSettings() {
 
       <Separator />
 
+      {/* --- The whole app ---------------------------------------------------- */}
+      <div className="flex flex-col gap-2">
+        <Row
+          icon={<Download className="size-4" />}
+          title="Keep the whole app on this device"
+          description="Save every page once so Ownspece opens and navigates with no connection at all, instead of one page at a time."
+          state={shellPages === null ? "manual" : shellPages > 0 ? "ready" : "empty"}
+          stateLabel={
+            shellPages === null
+              ? "Unsupported"
+              : shellPages > 0
+                ? `${shellPages} saved`
+                : "Not yet"
+          }
+        />
+
+        <label className="flex items-center justify-between gap-3 rounded-lg border p-3">
+          <span className="min-w-0 text-sm">
+            <span className="block font-medium">Refresh automatically</span>
+            <span className="block text-xs text-muted-foreground">
+              {shellSavedAt ? `Last refreshed ${relative(shellSavedAt)}.` : "Not refreshed yet."}
+              {" "}Kept up to date every six hours, and never on metered data.
+            </span>
+          </span>
+          <Switch
+            checked={shellOn}
+            onCheckedChange={(checked) => void toggleShell(checked)}
+            aria-label="Keep the whole app on this device"
+          />
+        </label>
+
+        {shellPages === null ? (
+          <p className="rounded-lg bg-muted/40 p-3 text-xs text-muted-foreground">
+            This browser cannot store the app — it may be a private window, or the app is
+            being served from a host that does not allow offline storage.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-fit"
+              disabled={warming || !shellOn}
+              onClick={() => void refreshOfflineCopy()}
+            >
+              {warming ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              {warming ? "Saving…" : "Save the whole app now"}
+            </Button>
+          </div>
+        )}
+      </div>
+
+      <Separator />
+
       {/* --- Offline data ----------------------------------------------------- */}
       <div className="flex flex-col gap-2">
         <Row
@@ -184,8 +309,8 @@ export function PwaSettings() {
           title="Offline data"
           description={
             hasCache
-              ? "Tasks and reminders are stored on this device so they stay readable and editable without a connection."
-              : "Nothing is cached yet. Open Tasks or Reminders while online to store a copy here."
+              ? "Tasks and reminders are stored row by row, so they stay editable without a connection — and changes made offline sync back. Notes can be pinned, starred and deleted offline too."
+              : "Nothing is cached yet. Open Tasks, Reminders or Notes while online to store a copy here."
           }
           state={hasCache ? "ready" : "empty"}
           stateLabel={hasCache ? "Cached" : "Empty"}
@@ -205,7 +330,7 @@ export function PwaSettings() {
             />
             {oldest ? (
               <p className="text-[11px] text-muted-foreground">
-                Cached data expires after 7 days without a refresh.
+                Cached rows expire after 7 days without a refresh.
               </p>
             ) : null}
 
@@ -271,7 +396,7 @@ export function PwaSettings() {
         open={confirmClear}
         onOpenChange={setConfirmClear}
         title="Clear offline data?"
-        description="Removes the tasks and reminders stored on this device. Anything still queued to sync will be lost. Your account data is not affected."
+        description="Removes every page of the app stored on this device, along with the tasks, reminders and notes kept row by row. Anything still queued to sync will be lost. Your account data is not affected."
         confirmLabel="Clear this device"
         onConfirm={clearOfflineData}
       />

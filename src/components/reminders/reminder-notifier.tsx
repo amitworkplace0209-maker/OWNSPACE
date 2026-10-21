@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { processDueRemindersAction } from "@/lib/actions/notifications";
+import { showSystemNotification } from "@/lib/notifications/system.client";
 import {
   buildDigest,
   planDelivery,
@@ -136,6 +137,12 @@ function detailOf(reminder: NotifiableReminder): string {
  * The browser notification is deliberately not fired alongside an in-app toast
  * unless the user asked for both — two alerts for one reminder is the kind of
  * thing that makes people turn notifications off entirely.
+ *
+ * The system alert goes through the service worker rather than the `Notification`
+ * constructor: on Android, which is where an installed app lives, the
+ * constructor throws and the alert simply never appears. The worker is also
+ * what lets the alert carry "Done" and "Snooze" buttons and survive the tab
+ * being closed.
  */
 function raiseAlert(reminder: NotifiableReminder, settings: NotifySettings): void {
   if (!settings.channels.in_app && !settings.channels.browser) return;
@@ -150,29 +157,33 @@ function raiseAlert(reminder: NotifiableReminder, settings: NotifySettings): voi
   }
 
   if (
-    settings.channels.browser &&
-    settings.browserPermission === "granted" &&
-    "Notification" in window &&
-    Notification.permission === "granted"
+    !settings.channels.browser ||
+    settings.browserPermission !== "granted" ||
+    !("Notification" in window)
   ) {
-    try {
-      const notification = new Notification(reminder.title || "Reminder", {
-        body: detail,
-        icon: "/icon-192x192.png",
-        badge: "/icon-192x192.png",
-        // One slot per reminder, so a re-fire replaces its own notification
-        // rather than stacking a second copy beside it.
-        tag: `ownspece-reminder-${reminder.id}`,
-      });
-      notification.onclick = () => {
-        window.focus();
-        notification.close();
-      };
-    } catch {
-      // Some browsers refuse Notification construction outside a service
-      // worker; the toast has already covered it when that channel is on.
-    }
+    return;
   }
+
+  // Fire and forget: the toast has already been raised, and a system alert
+  // that takes a moment to appear is still an alert that appears.
+  void showSystemNotification({
+    title: reminder.title || "Reminder",
+    body: detail,
+    tag: `ownspece-reminder-${reminder.id}`,
+    url: "/reminders",
+    type: "reminder",
+    entityId: reminder.id,
+    // A critical reminder keeps its alert on screen until it is dealt with;
+    // an ordinary one goes away on its own, like every other notification on
+    // the phone.
+    requireInteraction: reminder.priority === "urgent",
+    // The action buttons are what make a web notification feel native:
+    // "Done" and "Snooze" resolve without opening the app.
+    actions: [
+      { action: "complete", title: "Done" },
+      { action: "snooze", title: "Snooze 10m" },
+    ],
+  });
 }
 
 /**

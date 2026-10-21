@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import * as React from "react";
 import Link from "next/link";
@@ -41,12 +41,10 @@ import {
   bulkSetNotesFavoritedAction,
   bulkSetNotesPinnedAction,
   createNoteAction,
-  deleteNoteAction,
-  toggleNoteFavoriteAction,
-  toggleNotePinAction,
   updateNoteAction,
   type NoteFormState,
 } from "@/lib/actions/notes";
+import { useOfflineRows } from "@/hooks/use-offline-rows";
 import {
   UPDATED_BUCKET_LABEL,
   applyNoteFilters,
@@ -77,28 +75,44 @@ type ViewMode = "grid" | "list";
  * Notes.
  *
  * Project notes and personal notes live in one grid, because that is how they
- * are actually used — a personal note is just one with no project on it.
+ * are actually used â€” a personal note is just one with no project on it.
  *
  * The previous version hand-rolled its own filter bar instead of the shared
  * `WorkspaceToolbar`, capped the list at 200 rows and then filtered purely on
  * the client, so anything past 200 silently vanished from the results.
  */
+/**
+ * Guards a cached note before it is handed to the UI.
+ *
+ * Only the fields every note has, whatever page produced it: the list page and a
+ * project's notes tab carry different extras, and a snapshot written by one must
+ * still be readable by the other.
+ */
+function isCachedNote(value: unknown): value is NoteListItem {
+  if (!value || typeof value !== "object") return false;
+  const note = value as Partial<NoteListItem>;
+  return typeof note.id === "string" && note.id.length > 0 && typeof note.title === "string";
+}
+
 export function NotesWorkspace({
-  notes,
+  serverNotes,
   stats,
   projects,
   tags,
   nodes,
+  userId = null,
   initialProjectId = "",
   initialTag = "",
   initialQuery = "",
   readOnly = false,
 }: {
-  notes: NoteListItem[];
+  serverNotes: NoteListItem[];
   stats: NoteStats;
   projects: Project[];
   tags: Array<{ id: string; name: string; color: string | null }>;
   nodes: Array<{ id: string; title: string; project_id: string | null }>;
+  /** Null when the page cannot name the account; disables the offline cache. */
+  userId?: string | null;
   initialProjectId?: string;
   initialTag?: string;
   initialQuery?: string;
@@ -107,6 +121,23 @@ export function NotesWorkspace({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+
+  /**
+   * The rows this workspace actually renders.
+   *
+   * The prop is `serverNotes` and re-bound to `notes` here, so every downstream
+   * reference â€” filters, grouping, sorting, the grid, the list â€” keeps working
+   * unchanged. Exactly one line knows an offline layer exists; the rest of this
+   * file does not, and should not have to.
+   */
+  const offline = useOfflineRows({
+    userId,
+    entity: "notes",
+    rows: serverNotes,
+    validateRow: isCachedNote,
+    enabled: !readOnly,
+  });
+  const notes = offline.rows;
 
   const [query, setQuery] = React.useState(initialQuery);
   const [groupBy, setGroupBy] = React.useState<NoteGrouping | "">("");
@@ -253,12 +284,23 @@ export function NotesWorkspace({
     });
   }
 
-  /** Silent for the per-card toggles — a toast on every pin would be noise. */
-  function toggle(id: string, action: () => Promise<{ error?: string }>, fallback: string) {
-    startTransition(async () => {
-      const result = await action();
-      if (result.error) toast.error(result.error ?? fallback);
-      else router.refresh();
+  /**
+   * Pin and favourite, routed through the offline queue.
+   *
+   * Silent on success â€” a toast on every pin would be noise. An error still
+   * reports, because a write that genuinely failed should not look like one that
+   * merely has not reached the server yet.
+   *
+   * The patch is an absolute value, not a toggle. The queue is replayed later,
+   * possibly after the row was changed elsewhere, and a replayed *toggle* would
+   * invert whatever the server holds by then. Sending "pinned = false" converges;
+   * sending "flip it" does not.
+   */
+  function toggleField(note: NoteListItem, field: "is_pinned" | "is_favorited") {
+    void offline.apply({
+      op: "update",
+      rowId: note.id,
+      patch: { [field]: !note[field] },
     });
   }
 
@@ -304,7 +346,7 @@ export function NotesWorkspace({
         search={{
           value: query,
           onChange: setQuery,
-          placeholder: "Search titles, content, tags…",
+          placeholder: "Search titles, content, tagsâ€¦",
           label: "Search notes",
         }}
         grouping={{
@@ -397,8 +439,8 @@ export function NotesWorkspace({
             setFormOpen(true);
           }}
           onDelete={(note) => setDeleting(note)}
-          onTogglePin={readOnly ? undefined : (note) => toggle(note.id, () => toggleNotePinAction(note.id), "Could not pin the note.")}
-          onToggleStar={readOnly ? undefined : (note) => toggle(note.id, () => toggleNoteFavoriteAction(note.id), "Could not star the note.")}
+          onTogglePin={readOnly ? undefined : (note) => toggleField(note, "is_pinned")}
+          onToggleStar={readOnly ? undefined : (note) => toggleField(note, "is_favorited")}
         />
       ) : (
         <GridView
@@ -412,8 +454,8 @@ export function NotesWorkspace({
             setFormOpen(true);
           }}
           onDelete={(note) => setDeleting(note)}
-          onTogglePin={readOnly ? undefined : (note) => toggle(note.id, () => toggleNotePinAction(note.id), "Could not pin the note.")}
-          onToggleStar={readOnly ? undefined : (note) => toggle(note.id, () => toggleNoteFavoriteAction(note.id), "Could not star the note.")}
+          onTogglePin={readOnly ? undefined : (note) => toggleField(note, "is_pinned")}
+          onToggleStar={readOnly ? undefined : (note) => toggleField(note, "is_favorited")}
         />
       )}
 
@@ -440,16 +482,11 @@ export function NotesWorkspace({
         confirmLabel="Delete note"
         onConfirm={async () => {
           if (!deleting) return;
-          startTransition(async () => {
-            const result = await deleteNoteAction(deleting.id);
-            setDeleting(null);
-            if (result.error) {
-              toast.error(result.error);
-              return;
-            }
-            toast.success("Note deleted.");
-            router.refresh();
-          });
+          // Queued first, so a delete made with no connection survives until it
+          // can be sent. The row disappears immediately either way.
+          await offline.apply({ op: "delete", rowId: deleting.id });
+          setDeleting(null);
+          toast.success("Note deleted.");
         }}
       />
 
@@ -607,7 +644,7 @@ function BulkBar({
         }}
         className="h-7 rounded-md border border-input bg-transparent px-2 text-xs outline-none dark:bg-input/30"
       >
-        <option value="">Move to…</option>
+        <option value="">Move toâ€¦</option>
         <option value="personal">Personal (no project)</option>
         {projects.map((project) => (
           <option key={project.id} value={project.id}>
@@ -864,7 +901,7 @@ function NoteCard({
 
       {size.words > 150 ? (
         <span className="text-[10px] text-muted-foreground">
-          {size.words} words · {size.readingMinutes} min read
+          {size.words} words Â· {size.readingMinutes} min read
         </span>
       ) : null}
     </article>
@@ -937,7 +974,7 @@ function ListView({
                     {note.is_pinned ? <Pin className="size-3 fill-primary text-primary" /> : null}
                   </div>
                   <p className="truncate text-xs text-muted-foreground">
-                    {note.project_id ? `${note.project_name} · ` : "Personal · "}
+                    {note.project_id ? `${note.project_name} Â· ` : "Personal Â· "}
                     {formatRelativeTime(note.updated_at)}
                   </p>
                   <div className="mt-1">
@@ -1060,7 +1097,7 @@ function NoteFormDialog({
               name="content"
               defaultValue={note?.content ?? ""}
               rows={8}
-              placeholder="Write anything · Markdown works."
+              placeholder="Write anything Â· Markdown works."
             />
           </FormField>
 
@@ -1072,7 +1109,7 @@ function NoteFormDialog({
                 onChange={(event) => setProjectId(event.target.value)}
                 className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none dark:bg-input/30"
               >
-                <option value="">Personal — no project</option>
+                <option value="">Personal â€” no project</option>
                 {projects.map((project) => (
                   <option key={project.id} value={project.id}>
                     {project.name}
@@ -1137,7 +1174,7 @@ function NoteFormDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={pending}>
-              {pending ? "Saving…" : note ? "Save changes" : "Create note"}
+              {pending ? "Savingâ€¦" : note ? "Save changes" : "Create note"}
             </Button>
           </div>
         </form>

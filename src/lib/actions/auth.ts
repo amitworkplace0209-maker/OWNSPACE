@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { friendlyError } from "@/lib/actions/helpers";
 import { validateEmail } from "@/lib/auth/validation";
+import { getSiteUrl } from "@/lib/auth/site-url";
 
 export type ResetState = {
   error?: string;
@@ -32,7 +33,7 @@ export async function requestPasswordResetAction(
 
   const supabase = await createClient();
   const { error } = await supabase.auth.resetPasswordForEmail(raw, {
-    redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/auth/callback?next=/dashboard`,
+    redirectTo: `${await getSiteUrl()}/auth/callback?next=${encodeURIComponent("/dashboard")}`,
   });
 
   if (error) {

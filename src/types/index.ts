@@ -218,7 +218,7 @@ export type UserPreferences = {
   density: Density;
   background_preset: BackgroundPreset;
   /**
-   * How long the app stays unlocked after the MPIN or a fingerprint opens it.
+   * How long the app stays unlocked after the MPIN opens it.
    * Only read while the lock is on; ignored otherwise.
    */
   lock_duration: string;
