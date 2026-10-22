@@ -323,7 +323,9 @@ export function AppLockSettings({
           <CardDescription>
             Ownspece keeps a derived copy of the same MPIN on this device, so the
             lock screen opens without a connection. It is written whenever the MPIN
-            changes, and removed when you sign out.
+            changes, and removed when you sign out. A fingerprint or a device
+            PIN — both set under <span className="font-medium text-foreground">This device</span> —
+            is faster still.
           </CardDescription>
         </CardHeader>
         <CardContent>

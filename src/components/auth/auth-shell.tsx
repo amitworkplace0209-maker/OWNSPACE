@@ -88,7 +88,7 @@ function BrandAside() {
     { icon: NotebookPen, label: "Notes", note: "Wiki, daily notes and tags" },
     { icon: AlarmClock, label: "Reminders", note: "Real notifications, even when closed" },
     { icon: BarChart3, label: "Finance", note: "Monthly reports per category" },
-    { icon: Lock, label: "App lock", note: "One MPIN, works offline" },
+    { icon: Lock, label: "App lock", note: "One MPIN, or your fingerprint" },
   ];
 
   return (

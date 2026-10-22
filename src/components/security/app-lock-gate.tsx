@@ -43,31 +43,22 @@ function subscribeToUnlock(onChange: () => void) {
 }
 
 /**
- * The moment this browser was last unlocked, or null if it is locked.
+ * The stored unlock, exactly as it is.
  *
- * The expiry test lives *here*, inside the snapshot, rather than in the render
- * body. A snapshot is a read of external state; comparing the stored timestamp
- * against the clock is part of that read. Doing it in render instead would mean
- * calling `Date.now()` during a render, which is both an impure read and a way to
- * get two renders of the same locked app disagreeing about whether it is locked.
+ * No expiry test here, and that is the whole point of this function. A
+ * snapshot has to be **stable**: React compares the value it is given with the
+ * one from the last render, and re-renders whenever they differ. A snapshot
+ * that folded the clock into its answer would change between two reads a
+ * microsecond apart, and React would re-render forever.
  *
- * `locked` is passed in because an unlock that came from *skipping* the setup —
- * or from an account whose lock is off — must not quietly expire five minutes
- * later and throw somebody back onto a screen they already dismissed. Only a real
- * lock has a duration to run out.
+ * So the store holds the timestamp and nothing else. Whether it has *run out*
+ * is a comparison, and comparisons belong in the render body — see `expired`
+ * below.
  */
-function readUnlockAt(durationMs: number, locked: boolean, userId: string): number | null {
+function readUnlockAt(userId: string): number | null {
   const raw = window.sessionStorage.getItem(unlockKey(userId));
   const at = raw ? Number(raw) : NaN;
-  if (!Number.isFinite(at)) return null;
-
-  // "When the app is closed" never expires on a timer: there is no timer for
-  // it, because the lock comes from the app disappearing.
-  if (locked && durationMs !== Number.POSITIVE_INFINITY && Date.now() - at >= durationMs) {
-    return null;
-  }
-
-  return at;
+  return Number.isFinite(at) ? at : null;
 }
 
 /** The server has no session storage, so it always sees a locked app. */
@@ -128,13 +119,22 @@ export function AppLockGate({
       []
     ),
     React.useCallback(
-      () => readUnlockAt(durationMs, enabled, userId),
-      [durationMs, enabled, userId]
+      () => readUnlockAt(userId),
+      [userId]
     ),
     serverSnapshot
   );
 
-  // Pure: the snapshot already refused to return an expired timestamp.
+  /**
+   * Whether the app is open.
+   *
+   * No clock here on purpose. Whether the stored unlock has *run out* needs
+   * the current time, and `Date.now()` during a render is an impure read —
+   * two renders a millisecond apart would disagree about it. The expiry is
+   * settled by the effect below, which owns the timer and removes the token
+   * the moment it is spent; React batches that with the store's own update,
+   * so a lock that has run out never paints the app on the way to locking.
+   */
   const unlocked = unlockedAt !== null || (enabled && signedInGrant);
 
   /**
@@ -155,54 +155,126 @@ export function AppLockGate({
    * Re-locks when the app is closed or sent to the background, and on the
    * timer for the durations that name one.
    *
-   * The background case is unconditional, and it is the whole promise of the
-   * lock: **when the app is closed, the MPIN is asked for again**. A setting
-   * that let the app stay open after it had been put away made the lock
-   * decorative — a phone in a pocket with the app still running is a phone
-   * anybody can pick up and read.
+   * The background case is the whole promise of the lock: **when the app is
+   * closed, the MPIN is asked for again**. A setting that let the app stay
+   * open after it had been put away made the lock decorative — a phone in a
+   * pocket with the app still running is a phone anybody can pick up and read.
+   *
+   * "Closed" has to be told apart from "navigated", and the two look the same
+   * from the page's side: a full page load hides the old document exactly like
+   * switching apps does. The difference is that a navigation is followed by
+   * `pagehide` — the document is on its way out — while a backgrounded app
+   * stays alive and quiet.
+   *
+   * So the token is dropped a moment *after* the app goes to the background,
+   * and `pagehide` cancels that. A link that reloads the page keeps the
+   * unlock; an app that is put away loses it.
    */
   React.useEffect(() => {
     if (!enabled || !unlocked) return;
 
-    function onHidden() {
-      if (document.visibilityState === "hidden") writeUnlockAt(userId, null);
-    }
-    document.addEventListener("visibilitychange", onHidden);
+    /**
+     * How long the app may stay in the background before the lock comes back.
+     *
+     * Long enough for a `pagehide` to arrive — it comes within milliseconds —
+     * and short enough that putting the phone down is enough to lock it.
+     */
+    const HIDDEN_GRACE_MS = 1000;
 
-    // A page restored from the back/forward cache is a page that was
-    // backgrounded: the browser kept it, and it must not come back open.
+    let hiddenTimer: number | undefined;
+
+    function clearHiddenTimer() {
+      if (hiddenTimer === undefined) return;
+      window.clearTimeout(hiddenTimer);
+      hiddenTimer = undefined;
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "hidden") {
+        clearHiddenTimer();
+        hiddenTimer = window.setTimeout(() => {
+          hiddenTimer = undefined;
+          // Still hidden, so the app really was put away rather than
+          // navigated: this is the moment the lock comes back.
+          if (document.visibilityState === "hidden") writeUnlockAt(userId, null);
+        }, HIDDEN_GRACE_MS);
+        return;
+      }
+
+      // Back in the foreground before the grace ran out: the app was glanced
+      // at, not closed.
+      clearHiddenTimer();
+    }
+
+    /**
+     * The document is on its way out.
+     *
+     * A navigation and a closed tab look the same from here, and that is
+     * fine: the unlock token lives in `sessionStorage`, which belongs to the
+     * *tab*. A navigation keeps the tab — and the token — and a closed tab
+     * takes both. So the only thing to do here is cancel the background
+     * timer, which was about to lock an app that is merely being navigated.
+     */
+    function onPageHide() {
+      clearHiddenTimer();
+    }
+
     function onPageShow(event: PageTransitionEvent) {
+      // A page restored from the back/forward cache is a page that was
+      // backgrounded: the browser kept it, and it must not come back open.
       if (event.persisted) writeUnlockAt(userId, null);
     }
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pagehide", onPageHide);
     window.addEventListener("pageshow", onPageShow);
 
     let timer: number | undefined;
     if (durationMs !== Number.POSITIVE_INFINITY) {
+      // "When the app is closed" never expires on a timer: there is no timer
+      // for it, because the lock comes from the app disappearing.
       const remaining = durationMs - (Date.now() - (unlockedAt ?? Date.now()));
       if (remaining <= 0) {
+        // An unlock that ran out while the app was shut. Removing the token
+        // here — rather than during a render — is what keeps the comparison
+        // against the clock out of the render body.
         writeUnlockAt(userId, null);
-        return;
+      } else {
+        timer = window.setTimeout(() => writeUnlockAt(userId, null), remaining);
       }
-      timer = window.setTimeout(() => writeUnlockAt(userId, null), remaining);
     }
 
+    // The cleanup is returned whatever happened above. An early `return` in the
+    // middle of the body would leave the listeners registered — and this
+    // effect re-runs every time the unlock token changes, so the listeners
+    // would pile up one pair per render.
     return () => {
       if (timer !== undefined) window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onHidden);
+      clearHiddenTimer();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pagehide", onPageHide);
       window.removeEventListener("pageshow", onPageShow);
     };
   }, [enabled, unlocked, unlockedAt, durationMs, userId]);
 
-  // A token the snapshot rejected is dropped rather than left to be re-read on
-  // every render. This is a write to an external system, not state, so it does
-  // not cause a re-render by itself — but it only fires when there is genuinely
-  // something to clear, so a session that was never unlocked stays quiet instead
-  // of dispatching an event on every navigation.
+  /**
+   * An unlock that has run out is dropped rather than left to be re-read on
+   * every render.
+   *
+   * The timer above removes the token the moment it is spent, so this only
+   * has one job left: making sure a token that is already spent when the app
+   * is opened does not sit in storage. A *valid* token is the app's own
+   * record that it is open, and removing it here would lock the app on every
+   * full page load.
+   */
   React.useEffect(() => {
-    if (unlocked) return;
-    if (window.sessionStorage.getItem(unlockKey(userId)) === null) return;
+    if (unlockedAt === null) return;
+    if (!enabled) return;
+    if (durationMs === Number.POSITIVE_INFINITY) return;
+    if (Date.now() - unlockedAt < durationMs) return;
+
     writeUnlockAt(userId, null);
-  }, [unlocked, userId]);
+  }, [unlockedAt, enabled, durationMs, userId]);
 
   // The one-time setup comes first, and it is not a lock: there is no PIN yet to
   // be asked for. Until it is done the app stays unmounted, which also means a

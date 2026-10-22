@@ -10,6 +10,13 @@ Supabase (PostgreSQL, Auth, Storage).
 
 - **Phase 1 complete:** Project initialization, folder structure, application
   shell (sidebar, topbar, mobile bottom nav, theme system), placeholder routes.
+- **Sign-in is an MPIN sign-in:** email + MPIN, with the account password kept
+  as the recovery secret. New accounts choose their MPIN when they sign up.
+- **The app lock asks for the MPIN every time the app is closed**, and a
+  device can unlock with its own fingerprint or a device PIN instead.
+- **Notifications behave like the phone's own:** system alerts with "Done" and
+  "Snooze", an unread badge on the app icon, and push that reaches a closed
+  app.
 
 ## Getting Started
 

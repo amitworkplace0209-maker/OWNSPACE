@@ -148,13 +148,37 @@ describe("lockout and durations", () => {
     }
   });
 
-  it("falls back to five minutes for an unknown id", () => {
-    expect(lockDurationMs("five")).toBe(5 * 60_000);
-    expect(lockDurationMs("nonsense")).toBe(5 * 60_000);
-    expect(lockDurationMs(null)).toBe(5 * 60_000);
+  it("falls back to locking when the app closes for an unknown id", () => {
+    // The strictest of the settings. An id nobody recognises — written by an
+    // older version of the app, or by hand — must not quietly decide how long
+    // a locked workspace stays open.
+    expect(lockDurationMs("closed")).toBe(Number.POSITIVE_INFINITY);
+    expect(lockDurationMs("nonsense")).toBe(Number.POSITIVE_INFINITY);
+    expect(lockDurationMs(null)).toBe(Number.POSITIVE_INFINITY);
   });
 
-  it("can lock the instant the app is backgrounded", () => {
-    expect(lockDurationMs("immediately")).toBe(0);
+  it("locks when the app is closed", () => {
+    // The promise the lock makes: close the app, and it asks for the MPIN
+    // again. There is no timer for this one — the lock comes from the app
+    // disappearing, not from a clock.
+    expect(lockDurationMs("closed")).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("no longer offers a setting that leaves the app open until sign-out", () => {
+    // "Until I sign out" made the lock decorative: the workspace stayed open
+    // for as long as the tab lived.
+    const ids = LOCK_DURATIONS.map((entry) => entry.id as string);
+    expect(ids).not.toContain("session");
+  });
+
+  it("no longer offers a setting that relocks on every navigation", () => {
+    const ids = LOCK_DURATIONS.map((entry) => entry.id as string);
+    expect(ids).not.toContain("immediately");
+  });
+
+  it("keeps the timed durations in ascending order", () => {
+    const timed = LOCK_DURATIONS.filter((entry) => Number.isFinite(entry.ms)).map((entry) => entry.ms);
+    const sorted = [...timed].sort((a, b) => a - b);
+    expect(timed).toEqual(sorted);
   });
 });

@@ -9,6 +9,21 @@ import {
   MAX_MPIN_ATTEMPTS,
   verifyMpin,
 } from "@/lib/security/mpin";
+import {
+  GENERIC_SIGN_IN_ERROR,
+  nextSignInAttempt,
+  readSignInLock,
+  signInLockoutMessage,
+  type SignInSecurityRow,
+} from "@/lib/auth/signin-rules";
+
+export {
+  GENERIC_SIGN_IN_ERROR,
+  nextSignInAttempt,
+  readSignInLock,
+  signInLockoutMessage,
+};
+export type { SignInSecurityRow };
 
 /**
  * Signing in with an email and an MPIN.
@@ -51,21 +66,12 @@ export type AccountSecurityRow = {
 };
 
 /**
- * The message for every wrong credential.
- *
- * The same words whether the address is unknown, the MPIN is wrong, or the
- * account has no MPIN at all. Anything more specific turns the sign-in form
- * into a test for which addresses have accounts here.
- */
-export const GENERIC_SIGN_IN_ERROR = "That email and MPIN do not match an account.";
-
-/**
  * Finds the account behind an email address.
  *
  * Read with the service role, because at this point nobody is signed in and
  * the row is not visible to an anonymous client. The table is indexed on the
- * lower-cased address, and the address is lower-cased before it gets here, so
- * this is one index lookup rather than a scan.
+ * address, and the address is lower-cased before it gets here, so this is one
+ * index lookup rather than a scan.
  */
 export async function findAccountByEmail(
   email: string
@@ -82,57 +88,6 @@ export async function findAccountByEmail(
 
   if (error || !data) return null;
   return data as AccountSecurityRow;
-}
-
-/**
- * Whether the account is currently locked out, and until when.
- *
- * Exported as a pure function of the row and the clock so the rule can be
- * tested without a database.
- */
-export function readSignInLock(
-  row: Pick<AccountSecurityRow, "signin_locked_until">,
-  now: number
-): { locked: boolean; until: number | null } {
-  if (!row.signin_locked_until) return { locked: false, until: null };
-
-  const until = new Date(row.signin_locked_until).getTime();
-  if (!Number.isFinite(until)) return { locked: false, until: null };
-  if (until <= now) return { locked: false, until: null };
-
-  return { locked: true, until };
-}
-
-/**
- * What one more wrong attempt does.
- *
- * The counter is written on every attempt, successful or not, so a row that
- * has failed five times locks on the sixth rather than on the eleventh.
- */
-export function nextSignInAttempt(
-  failedAttempts: number | null | undefined
-): { attempts: number; shouldLock: boolean; lockedUntil: string | null } {
-  const attempts = (failedAttempts ?? 0) + 1;
-  const shouldLock = attempts >= MAX_MPIN_ATTEMPTS;
-
-  return {
-    attempts,
-    shouldLock,
-    lockedUntil: shouldLock ? new Date(Date.now() + LOCKOUT_MS).toISOString() : null,
-  };
-}
-
-/**
- * The message shown while an account is locked out.
- *
- * Minutes are rounded up, so "0 minutes remaining" never appears while the
- * lockout is still running.
- */
-export function signInLockoutMessage(until: number, now: number = Date.now()): string {
-  const minutes = Math.max(1, Math.ceil((until - now) / 60_000));
-  return `Too many attempts. Try again in about ${minutes} ${
-    minutes === 1 ? "minute" : "minutes"
-  }.`;
 }
 
 /**
@@ -159,7 +114,7 @@ export async function recordFailedSignIn(
   userId: string,
   failedAttempts: number | null | undefined
 ): Promise<{ lockedUntil: string | null }> {
-  const next = nextSignInAttempt(failedAttempts);
+  const next = nextSignInAttempt(failedAttempts, Date.now(), MAX_MPIN_ATTEMPTS, LOCKOUT_MS);
   const admin = getAdminClient();
 
   await admin

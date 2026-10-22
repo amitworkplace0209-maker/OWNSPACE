@@ -40,15 +40,28 @@ begin;
 alter table public.user_security
   add column if not exists email text;
 
--- Case-insensitive, because an address is not case-sensitive and `Ada@x.com`
--- and `ada@x.com` are the same account. A plain unique index on `email` would
--- let both exist and split one person's account in two.
+-- Lower-cased, and checked to stay that way. An address is not case-sensitive,
+-- so `Ada@x.com` and `ada@x.com` are one account: two rows for one person
+-- would split their account in two, and one of the two would be unreachable.
+--
+-- The unique index is on the column itself rather than on `lower(email)`,
+-- because the sign-in looks the account up with an equality filter, and an
+-- equality filter cannot use an index over a function.
+alter table public.user_security
+  drop constraint if exists user_security_email_lowercase;
+
+alter table public.user_security
+  add constraint user_security_email_lowercase
+    check (email is null or email = lower(email));
+
+drop index if exists public.user_security_email_unique;
+
 create unique index if not exists user_security_email_unique
-  on public.user_security (lower(email))
+  on public.user_security (email)
   where email is not null;
 
 comment on column public.user_security.email is
-  'Login identifier, copied from auth.users so an MPIN sign-in is one indexed lookup. Case-insensitive.';
+  'Login identifier, copied from auth.users so an MPIN sign-in is one indexed lookup. Always lower case.';
 
 -- ---------------------------------------------------------------------------
 -- 2. Sign-in lockout

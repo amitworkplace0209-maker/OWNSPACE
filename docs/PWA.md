@@ -1,64 +1,87 @@
 # Ownspece — PWA Documentation
 
-## Current Status: Partial Working
+## Current status: working
 
-### What Works
-- **Web App Manifest**: `/manifest.webmanifest` — properly configured with name, icons, theme colors
-- **Service Worker**: `/sw.js` — caching strategy with network-first for navigations, cache-first for assets
-- **Icons**: 192x192 and 512x512 (regular and maskable) in `/public/`
-- **Standalone Mode**: `display="standalone"` configured
-- **Theme Color**: Adapts to light/dark system preference
-- **Asset Protection**: PWA assets are accessible without authentication via `src/proxy.ts`
+### What works
 
-### What Needs Work
-- **Push Notifications**: Not implemented
-- **Notification Click Handling**: Not implemented
-- **Offline Fallback Page**: Not implemented
-- **Background Sync**: Not implemented
-- **Cache Update Strategy**: Basic, needs improvement
+- **Web App Manifest** — `/manifest.webmanifest`, generated from
+  `src/app/manifest.ts`: name, icons (regular *and* maskable), theme and
+  background colours, `display: standalone`, long-press shortcuts, and an
+  `id` so the installed app keeps one identity across updates.
+- **Service Worker** — `/sw.js`. Network-first for navigations with a short
+  deadline, cache-first for content-addressed assets, a per-account cache for
+  rendered pages, background sync for queued edits, and push handling.
+- **Install prompt** — `usePwaInstall` captures `beforeinstallprompt` and
+  shows the manual steps on iOS, which has no programmatic prompt at all.
+- **Web push** — VAPID keys on the server, one subscription row per device,
+  and a fan-out that prunes dead endpoints.
+- **System notifications** — raised through the service worker, with action
+  buttons, a badge, and a buzz.
+- **Offline** — the app shell, and the task, reminder and note rows, are
+  stored on the device and replayed when the connection comes back.
 
-### Service Worker (`public/sw.js`)
-- **Version**: `ownspece-v1`
-- **Cache Name**: `ownspece-v1-assets`
-- **Precached Assets**: `/`, `/manifest.webmanifest`, icons
-- **Fetch Strategy**: Network-first for navigations, cache-first for static assets
+### The two things that make it feel like an app
 
-### Web Manifest (`src/app/manifest.ts`)
+**Notifications.** Raised through `registration.showNotification`, never
+through the `Notification` constructor: on Android — where an installed app
+lives — the constructor throws and the alert silently never appears. Alerts
+carry "Done" and "Snooze" buttons, an intent raised while the app was closed
+is parked in IndexedDB and replayed on the next launch, and the unread count
+is drawn on the app icon by the operating system.
+
+**The lock.** Installed on a phone, the app is behind an MPIN — or the
+device's own fingerprint, or a PIN that never leaves the machine. The lock
+comes back the moment the app is closed or sent to the background.
+
+### Service worker (`public/sw.js`)
+
+| | |
+| --- | --- |
+| Version | `ownspece-v6` (`ownspece-dev` on localhost) |
+| Caches | `-static`, `-runtime`, `-meta`, and one `-shell-<user>` per account |
+| Precache | `/offline`, the manifest, the icons |
+| Navigations | network first with a 3.5 s deadline, then the account's cache, then `/offline` |
+| Assets | cache first, with a background refresh |
+| Never cached | `/login`, `/signup`, `/auth`, `/forgot-password`, `/offline`, `/api` |
+
+The per-account shell cache is the answer to "a shared device shows the last
+person's dashboard": a cached page is only ever served to the account it was
+rendered for, and the whole bucket is deleted when that account signs out.
+
+### Web manifest (`src/app/manifest.ts`)
+
 - **Name**: "Ownspece — Personal Project Operating System"
-- **Short Name**: "Ownspece"
-- **Start URL**: `/`
-- **Display**: `standalone`
-- **Background**: `#ffffff` (light), theme color `#18181b` (dark)
-- **Icons**: 192x192, 512x512 (regular and maskable)
+- **Short name**: "Ownspece"
+- **Start URL**: `/dashboard`
+- **Display**: `standalone` (with `window-controls-overlay` as an override)
+- **Theme / background**: `#0a0c11`
+- **Icons**: 192×192 and 512×512, regular and maskable
+- **Shortcuts**: New task, New note, New project, New reminder, Focus timer
 
-### Proxy Protection (`src/proxy.ts`)
-The following routes are accessible without authentication:
-- `/manifest.webmanifest`
-- `/sw.js`
-- `/icon-*` assets
+### Proxy protection (`src/proxy.ts`)
 
-This prevents PWA assets from redirecting to login.
+Accessible without a session: `/manifest.webmanifest`, `/sw.js`, the icons,
+`/offline`, and `/api/push/public-key` — the VAPID *public* key, which
+identifies the application and carries no secret. Exempting it means a
+signed-out or expired session gets the route's own JSON error instead of an
+HTML redirect the caller cannot parse.
 
-### Installation Requirements
-1. Valid manifest served at `/manifest.webmanifest`
-2. Service worker registered at scope `/`
-3. HTTPS (required for service workers)
-4. Proper icons at required sizes
-5. `display: standalone` or `fullscreen`
+### Installation requirements
 
-### Recommended Improvements
-1. **Add push notification support** with service worker push event handling
-2. **Implement offline fallback page** for when the network is unavailable
-3. **Add background sync** for offline data submission
-4. **Implement cache versioning** for automatic updates
-5. **Add notification click handler** for interactive notifications
-6. **Add a proper offline page** with cached content
-7. **Implement periodic cache cleanup**
+1. A valid manifest served at `/manifest.webmanifest`
+2. The service worker registered at scope `/`
+3. HTTPS (localhost counts)
+4. Icons at 192 and 512, plus a maskable one
+5. `display: standalone`
 
-### Testing PWA
-1. Open Chrome DevTools → Application → Manifest
-2. Check all fields are populated
-3. Test "Add to Home Screen"
-4. Verify service worker is registered (Application → Service Workers)
-5. Test offline mode (Application → Service Workers → Offline)
-6. Verify PWA assets load without authentication
+### Testing it
+
+1. Chrome DevTools → Application → Manifest: every field populated.
+2. Application → Service Workers: the worker is active and controls the page.
+3. Application → Manifest → Install: Ownspece installs and opens in its own
+   window.
+4. On the installed app, turn notifications on in Settings → App & offline,
+   then send yourself a reminder: it arrives as a system notification with
+   "Done" and "Snooze" on it, and the icon carries the unread count.
+5. Close the app and open it again: it asks for the MPIN — or the
+   fingerprint, if one is enrolled.

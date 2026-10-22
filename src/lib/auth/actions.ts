@@ -133,15 +133,25 @@ export async function signInAction(
   if (emailError) return { error: emailError };
   if (!mpin) return { error: "Enter your MPIN." };
 
-  const row = await findAccountByEmail(email);
+  // The lookup needs the service role: nobody is signed in yet, and the
+  // account's row is not visible to an anonymous client. A server without the
+  // key cannot do MPIN sign-in at all, and says so rather than failing with a
+  // stack trace.
+  let row: Awaited<ReturnType<typeof findAccountByEmail>> = null;
+  try {
+    row = await findAccountByEmail(email);
+  } catch {
+    return {
+      error:
+        "Signing in with an MPIN is not available on this server. Use your password instead.",
+    };
+  }
+
   const now = Date.now();
 
   // Locked out: spend the verification time anyway, so the wait is the same
   // as a wrong guess and cannot be used to tell the two apart.
-  const lock = readSignInLock(
-    row ?? { signin_locked_until: null },
-    now
-  );
+  const lock = readSignInLock(row, now);
   if (lock.locked && lock.until) {
     await verifyAccountMpin(row, mpin);
     return { error: signInLockoutMessage(lock.until, now) };
@@ -167,13 +177,19 @@ export async function signInAction(
 
   await recordSuccessfulSignIn(row.user_id);
 
+  const session = await openSessionForAccount(email).catch(() => ({
+    ok: false as const,
+    error: "Could not open a session for that account.",
+  }));
+  if (!session.ok) return { error: session.error };
+
   // The MPIN has just been proved, so the workspace does not ask for it again
   // the moment it opens. The ticket is spent by the lock gate and deleted, so
   // closing the app locks it as promised.
+  //
+  // Written *after* the session exists, so a failed sign-in never leaves a
+  // ticket behind for whoever signs in next.
   await grantUnlock(row.user_id);
-
-  const session = await openSessionForAccount(email);
-  if (!session.ok) return { error: session.error };
 
   // The account found by email and the account the session belongs to must be
   // the same one. They always are; this is the check that says so out loud.
@@ -328,27 +344,36 @@ export async function signUpAction(
   const { hash, salt } = await hashMpinWithSalt(mpin);
 
   const admin = getAdminClient();
-  const { error: securityError } = await admin.from("user_security").upsert(
-    {
-      user_id: userId,
-      email: accountEmail,
-      mpin_hash: hash,
-      mpin_salt: salt,
-      mpin_set_at: new Date().toISOString(),
-      // On from the start: the user chose an MPIN precisely so the app would
-      // ask for it, and making them find a switch afterwards is how a lock
-      // stays off forever.
-      is_lock_enabled: true,
-      failed_attempts: 0,
-      locked_until: null,
-      signin_failed_attempts: 0,
-      signin_locked_until: null,
-      // The MPIN was just proved, so the workspace does not ask for it again
-      // the moment it opens.
-      last_unlocked_at: new Date().toISOString(),
-    },
-    { onConflict: "user_id" }
-  );
+  let securityError: unknown = null;
+  try {
+    const write = await admin.from("user_security").upsert(
+      {
+        user_id: userId,
+        email: accountEmail,
+        mpin_hash: hash,
+        mpin_salt: salt,
+        mpin_set_at: new Date().toISOString(),
+        // On from the start: the user chose an MPIN precisely so the app would
+        // ask for it, and making them find a switch afterwards is how a lock
+        // stays off forever.
+        is_lock_enabled: true,
+        failed_attempts: 0,
+        locked_until: null,
+        signin_failed_attempts: 0,
+        signin_locked_until: null,
+        // The MPIN was just proved, so the workspace does not ask for it again
+        // the moment it opens.
+        last_unlocked_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" }
+    );
+    securityError = write.error;
+  } catch {
+    // A server without the service role key cannot write the row at all. The
+    // account exists; the MPIN does not, and the app will ask for one the
+    // first time it is opened.
+    securityError = { message: "The security service is not configured." };
+  }
 
   if (securityError) {
     return {

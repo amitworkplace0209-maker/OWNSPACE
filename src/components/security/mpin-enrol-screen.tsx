@@ -12,14 +12,13 @@ import { MPIN_MAX, MPIN_MIN } from "@/lib/security/mpin";
 import { cn } from "cn";
 
 /**
- * The one-time MPIN setup, shown after the very first sign-in.
+ * The one-time MPIN setup, for an account that has never chosen one.
  *
- * Why this is here and not on the sign-up form: at sign-up there is no
- * authenticated session, so an MPIN chosen there would have to be carried through
- * the confirmation email and written by a privileged server. A secret that
- * crosses an unverified channel unencrypted is a worse secret than no secret.
- * Here the user is already authenticated, the write goes through RLS, and the
- * PIN is hashed before it touches the database.
+ * New accounts choose their MPIN on the sign-up form, where it is hashed and
+ * written in the same request that creates the account. This screen is for the
+ * accounts that predate that — the ones whose row exists with no hash — and
+ * for the moment after a password reset, when the old hash has been cleared
+ * so a new one can be chosen.
  *
  * Skipping is allowed, and skipping means *only* skipping this session — there is
  * no server-side "dismissed" flag, because a permanent dismissal would leave

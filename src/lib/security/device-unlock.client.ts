@@ -117,22 +117,39 @@ type StoredDevicePin = {
   hashHex: string;
 };
 
+/**
+ * Parses the stored device PIN.
+ *
+ * Exported so the boundary between "this device has a PIN" and "it does not"
+ * can be tested directly. A record that fails to parse reads as *no record*,
+ * never as a match and never as a mismatch: treating a corrupt record as a
+ * match is an unlock nobody earned, and treating one as a mismatch locks a
+ * person out of their own workspace.
+ */
+export function parseDevicePin(raw: string | null): StoredDevicePin | null {
+  if (!raw) return null;
+
+  const parts = raw.split("$");
+  if (parts.length !== 4 || parts[0] !== "pbkdf2") return null;
+
+  const iterations = Number(parts[1]);
+  if (!Number.isInteger(iterations) || iterations < 1 || iterations > 5_000_000) return null;
+
+  const [, , saltHex, hashHex] = parts;
+  if (!/^[0-9a-f]+$/i.test(saltHex) || !/^[0-9a-f]+$/i.test(hashHex)) return null;
+  if (saltHex.length !== SALT_BYTES * 2 || hashHex.length !== HASH_BITS / 4) return null;
+
+  return { iterations, saltHex: saltHex.toLowerCase(), hashHex: hashHex.toLowerCase() };
+}
+
+/** The string form of a stored device PIN. */
+export function formatDevicePin(record: StoredDevicePin): string {
+  return `pbkdf2$${record.iterations}$${record.saltHex}$${record.hashHex}`;
+}
+
 function readDevicePin(userId: string): StoredDevicePin | null {
   try {
-    const raw = window.localStorage.getItem(devicePinKey(userId));
-    if (!raw) return null;
-
-    const parts = raw.split("$");
-    if (parts.length !== 4 || parts[0] !== "pbkdf2") return null;
-
-    const iterations = Number(parts[1]);
-    if (!Number.isInteger(iterations) || iterations < 1 || iterations > 5_000_000) return null;
-
-    const [, , saltHex, hashHex] = parts;
-    if (!/^[0-9a-f]+$/i.test(saltHex) || !/^[0-9a-f]+$/i.test(hashHex)) return null;
-    if (saltHex.length !== SALT_BYTES * 2 || hashHex.length !== HASH_BITS / 4) return null;
-
-    return { iterations, saltHex: saltHex.toLowerCase(), hashHex: hashHex.toLowerCase() };
+    return parseDevicePin(window.localStorage.getItem(devicePinKey(userId)));
   } catch {
     return null;
   }
@@ -160,7 +177,7 @@ export async function saveDevicePin(userId: string, pin: string): Promise<boolea
 
     window.localStorage.setItem(
       devicePinKey(userId),
-      `pbkdf2$${ITERATIONS}$${saltHex}$${hashHex}`
+      formatDevicePin({ iterations: ITERATIONS, saltHex, hashHex })
     );
     announce();
     return true;
@@ -225,11 +242,17 @@ const ALG_RSA = -7;
 /** ECDSA over P-256 with SHA-256. */
 const ALG_EC = -257;
 
-function readBiometric(userId: string): StoredBiometric | null {
-  try {
-    const raw = window.localStorage.getItem(biometricKey(userId));
-    if (!raw) return null;
+/**
+ * Parses a stored fingerprint record.
+ *
+ * Exported for the same reason as the device PIN: a record that cannot be
+ * parsed must read as "no fingerprint here", never as one that unlocks
+ * anything.
+ */
+export function parseBiometric(raw: string | null): StoredBiometric | null {
+  if (!raw) return null;
 
+  try {
     const parsed = JSON.parse(raw) as Partial<StoredBiometric>;
     if (!parsed.credentialId || !parsed.publicKey) return null;
     if (parsed.algorithm !== ALG_RSA && parsed.algorithm !== ALG_EC) return null;
@@ -241,6 +264,14 @@ function readBiometric(userId: string): StoredBiometric | null {
       counter: typeof parsed.counter === "number" ? parsed.counter : 0,
       transports: Array.isArray(parsed.transports) ? parsed.transports : [],
     };
+  } catch {
+    return null;
+  }
+}
+
+function readBiometric(userId: string): StoredBiometric | null {
+  try {
+    return parseBiometric(window.localStorage.getItem(biometricKey(userId)));
   } catch {
     return null;
   }
