@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   formatDevicePin,
+  hasValidAssertionFlags,
   parseBiometric,
   parseDevicePin,
+  readAssertionCounter,
 } from "@/lib/security/device-unlock.client";
 
 /**
@@ -73,6 +75,13 @@ describe("parseBiometric", () => {
     expect(record?.transports).toEqual([]);
   });
 
+  it("accepts RS256 credentials as well as ES256", () => {
+    expect(
+      parseBiometric(JSON.stringify({ credentialId: "a", publicKey: "b", algorithm: -257 }))
+        ?.algorithm
+    ).toBe(-257);
+  });
+
   it.each([
     ["null", null],
     ["empty", ""],
@@ -82,5 +91,30 @@ describe("parseBiometric", () => {
     ["unknown algorithm", JSON.stringify({ credentialId: "a", publicKey: "b", algorithm: -99 })],
   ])("rejects %s", (_label, raw) => {
     expect(parseBiometric(raw)).toBeNull();
+  });
+});
+
+describe("WebAuthn assertion data", () => {
+  function authenticatorData(flags: number, counter = 0): Uint8Array {
+    const data = new Uint8Array(37);
+    data[32] = flags;
+    data[33] = (counter >>> 24) & 0xff;
+    data[34] = (counter >>> 16) & 0xff;
+    data[35] = (counter >>> 8) & 0xff;
+    data[36] = counter & 0xff;
+    return data;
+  }
+
+  it("requires both user presence and user verification", () => {
+    expect(hasValidAssertionFlags(authenticatorData(0x05))).toBe(true);
+    expect(hasValidAssertionFlags(authenticatorData(0x01))).toBe(false);
+    expect(hasValidAssertionFlags(authenticatorData(0x04))).toBe(false);
+    expect(hasValidAssertionFlags(new Uint8Array(36))).toBe(false);
+  });
+
+  it("reads the counter from bytes 33-36 regardless of the AT flag", () => {
+    expect(readAssertionCounter(authenticatorData(0x05, 42))).toBe(42);
+    expect(readAssertionCounter(authenticatorData(0x45, 7))).toBe(7);
+    expect(readAssertionCounter(new Uint8Array(37))).toBe(0);
   });
 });

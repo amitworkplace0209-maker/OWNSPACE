@@ -74,6 +74,12 @@ function writeUnlockAt(userId: string, at: number | null): void {
   window.dispatchEvent(new Event(UNLOCK_EVENT));
 }
 
+/** Called on sign-out: a tab-scoped unlock must not survive the account. */
+export function clearUnlockAt(userId: string): void {
+  if (typeof window === "undefined") return;
+  writeUnlockAt(userId, null);
+}
+
 /**
  * Wraps the app in the lock screen when it is on and this browser is not
  * currently unlocked.

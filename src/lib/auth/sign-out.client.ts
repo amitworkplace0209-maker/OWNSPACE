@@ -7,6 +7,8 @@ import { clearTaskCache } from "@/lib/offline/task-cache.client";
 import { clearReminderCache } from "@/lib/offline/reminder-cache.client";
 import { clearShell } from "@/lib/offline/shell-client";
 import { clearRowCache } from "@/lib/offline/row-cache.client";
+import { clearSyncMetadata } from "@/lib/offline/sync-status.client";
+import { clearUnlockAt } from "@/components/security/app-lock-gate";
 
 /**
  * Signing out, with the device's own copy of the account cleaned up.
@@ -39,6 +41,8 @@ export async function signOutOnDevice(userId: string): Promise<void> {
   // unlock the app with the last owner's finger.
   clearLocalMpin(userId);
   clearDeviceUnlock(userId);
+  clearSyncMetadata(userId);
+  clearUnlockAt(userId);
 
   await signOutAction();
 }

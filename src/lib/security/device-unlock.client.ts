@@ -81,8 +81,9 @@ function fromBase64Url(value: string): Uint8Array {
   return bytes;
 }
 
-function toHex(bytes: ArrayBuffer): string {
-  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+function toHex(bytes: ArrayBuffer | Uint8Array): string {
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  return [...view].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function devicePinKey(userId: string): string {
@@ -237,10 +238,16 @@ type StoredBiometric = {
   transports: string[];
 };
 
-/** RSASSA-PKCS1-v1_5 with SHA-256. */
-const ALG_RSA = -7;
-/** ECDSA over P-256 with SHA-256. */
-const ALG_EC = -257;
+/** ECDSA over P-256 with SHA-256 (COSE ES256). */
+const ALG_EC = -7;
+/** RSASSA-PKCS1-v1_5 with SHA-256 (COSE RS256). */
+const ALG_RSA = -257;
+
+/** The relying party id must be explicit; browsers differ when it is omitted. */
+function webAuthnRpId(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  return window.location.hostname || undefined;
+}
 
 /**
  * Parses a stored fingerprint record.
@@ -339,20 +346,23 @@ export async function enrolBiometric(
     credential = (await navigator.credentials.create({
       publicKey: {
         challenge,
-        rp: { name: "Ownspece" },
+        rp: { name: "Ownspece", ...(webAuthnRpId() ? { id: webAuthnRpId() } : {}) },
         user: {
           id: userIdBytes,
           name: userId,
           displayName: "Ownspece on this device",
         },
+        // ES256 first: every platform authenticator supports it, and it is far
+        // faster to verify than RSA. RS256 remains as the fallback.
         pubKeyCredParams: [
-          { type: "public-key", alg: ALG_RSA },
           { type: "public-key", alg: ALG_EC },
+          { type: "public-key", alg: ALG_RSA },
         ],
         authenticatorSelection: {
           authenticatorAttachment: "platform",
-          residentKey: "required",
-          requireResidentKey: true,
+          // Discoverable credentials are not needed: every assertion names the
+          // credential id. "preferred" keeps older readers working.
+          residentKey: "preferred",
           userVerification: "required",
         },
         timeout: 120_000,
@@ -401,18 +411,26 @@ export async function enrolBiometric(
  * proving to itself that the person in front of it is the person who
  * enrolled, and the account is not part of the exchange at all.
  */
-export async function verifyBiometric(userId: string): Promise<boolean> {
+export type BiometricVerification =
+  | { ok: true }
+  | { ok: false; reason: "unavailable" | "cancelled" | "failed" | "compromised" };
+
+export async function verifyBiometric(userId: string): Promise<BiometricVerification> {
   const stored = readBiometric(userId);
-  if (!stored) return false;
-  if (typeof window === "undefined" || !navigator.credentials) return false;
+  if (!stored) return { ok: false, reason: "unavailable" };
+  if (typeof window === "undefined" || !navigator.credentials) {
+    return { ok: false, reason: "unavailable" };
+  }
 
   const challenge = globalThis.crypto.getRandomValues(new Uint8Array(32));
+  const rpId = webAuthnRpId();
 
   let assertion: PublicKeyCredential | null = null;
   try {
     assertion = (await navigator.credentials.get({
       publicKey: {
         challenge,
+        ...(rpId ? { rpId } : {}),
         allowCredentials: [
           {
             type: "public-key",
@@ -425,12 +443,12 @@ export async function verifyBiometric(userId: string): Promise<boolean> {
       },
     })) as PublicKeyCredential | null;
   } catch {
-    // A cancelled prompt, a locked-out sensor, a timeout: all of them mean
-    // "not unlocked", and none of them are worth an error message of their own.
-    return false;
+    // A cancelled prompt, a locked-out sensor, a timeout: none of them are a
+    // wrong fingerprint, so the caller must not show an "incorrect" error.
+    return { ok: false, reason: "cancelled" };
   }
 
-  if (!assertion) return false;
+  if (!assertion) return { ok: false, reason: "cancelled" };
 
   const response = assertion.response as AuthenticatorAssertionResponse;
 
@@ -441,14 +459,33 @@ export async function verifyBiometric(userId: string): Promise<boolean> {
   try {
     clientData = JSON.parse(new TextDecoder().decode(response.clientDataJSON));
   } catch {
-    return false;
+    return { ok: false, reason: "failed" };
   }
 
-  if (clientData.type !== "webauthn.get") return false;
-  if (clientData.challenge !== toBase64Url(challenge)) return false;
-  if (clientData.origin !== window.location.origin) return false;
+  if (clientData.type !== "webauthn.get") return { ok: false, reason: "failed" };
+  if (clientData.challenge !== toBase64Url(challenge)) return { ok: false, reason: "failed" };
+  if (clientData.origin !== window.location.origin) return { ok: false, reason: "failed" };
 
   const authenticatorData = new Uint8Array(response.authenticatorData);
+  if (!hasValidAssertionFlags(authenticatorData)) return { ok: false, reason: "failed" };
+
+  // The first 32 bytes are the SHA-256 of the relying party id. Checking them
+  // stops an assertion made for another site from unlocking this one.
+  const expectedRpIdHash = new Uint8Array(
+    await globalThis.crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(rpId ?? window.location.hostname)
+    )
+  );
+  if (
+    !safeEqualHex(
+      toHex(authenticatorData.slice(0, 32).buffer),
+      toHex(expectedRpIdHash.buffer)
+    )
+  ) {
+    return { ok: false, reason: "failed" };
+  }
+
   const clientDataHash = new Uint8Array(
     await globalThis.crypto.subtle.digest("SHA-256", response.clientDataJSON)
   );
@@ -489,18 +526,18 @@ export async function verifyBiometric(userId: string): Promise<boolean> {
       );
     }
   } catch {
-    return false;
+    return { ok: false, reason: "failed" };
   }
 
-  if (!verified) return false;
+  if (!verified) return { ok: false, reason: "failed" };
 
-  // The signature counter is how a cloned authenticator is noticed. A counter
-  // that goes *backwards* means the key was copied somewhere else, so the
-  // enrolment is dropped rather than trusted.
-  const counter = typeof response.authenticatorData === "object" ? readCounter(response) : 0;
-  if (counter > 0 && stored.counter > 0 && counter <= stored.counter) {
+  // A counter that goes *backwards* means the key was copied somewhere else,
+  // so the enrolment is dropped rather than trusted. Zero is allowed: many
+  // authenticators never implement a counter.
+  const counter = readAssertionCounter(authenticatorData);
+  if (counter > 0 && stored.counter > 0 && counter < stored.counter) {
     clearBiometric(userId);
-    return false;
+    return { ok: false, reason: "compromised" };
   }
 
   try {
@@ -512,20 +549,17 @@ export async function verifyBiometric(userId: string): Promise<boolean> {
     // The counter is a nicety; failing to save it must not fail the unlock.
   }
 
-  return true;
+  return { ok: true };
 }
 
-/**
- * The signature counter out of the authenticator data.
- *
- * Bytes 33–36 of the authenticator data, big-endian, when the attested
- * credential data flag is not set.
- */
-function readCounter(response: AuthenticatorAssertionResponse): number {
-  const data = new Uint8Array(response.authenticatorData);
-  if (data.length < 37) return 0;
-  if ((data[32] & 0x40) === 0) return 0;
+/** User presence and user verification are both required for an unlock. */
+export function hasValidAssertionFlags(data: Uint8Array): boolean {
+  return data.length >= 37 && (data[32] & 0x05) === 0x05;
+}
 
+/** The big-endian signature counter at bytes 33–36 of authenticator data. */
+export function readAssertionCounter(data: Uint8Array): number {
+  if (data.length < 37) return 0;
   return (
     ((data[33] << 24) | (data[34] << 16) | (data[35] << 8) | data[36]) >>> 0
   );

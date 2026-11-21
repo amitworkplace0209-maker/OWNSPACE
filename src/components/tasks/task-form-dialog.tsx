@@ -16,6 +16,9 @@ import { FormField } from "@/components/shared/form-field";
 import { createTaskAction, updateTaskAction } from "@/lib/actions/tasks";
 import { TASK_STATUSES, PRIORITIES } from "@/types";
 import { toIsoSubmit } from "@/lib/format";
+import { useOnlineStatus } from "@/hooks/use-online-status";
+import type { OfflineTaskWrite } from "@/hooks/use-tasks-live";
+import type { CachedTask } from "@/lib/offline/task-cache";
 import type { ProjectPhase, Task } from "@/types";
 import type { Project } from "@/types";
 
@@ -42,6 +45,7 @@ export function TaskFormDialog({
   phases,
   task,
   defaultProjectId,
+  onOfflineSave,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -49,12 +53,65 @@ export function TaskFormDialog({
   phases: ProjectPhase[];
   task?: Task | null;
   defaultProjectId?: string | null;
+  /** Provided by the workspace: queues a write in IndexedDB when offline. */
+  onOfflineSave?: (input: OfflineTaskWrite) => Promise<string | null>;
 }) {
   const router = useRouter();
+  const online = useOnlineStatus();
   const [projectId, setProjectId] = useState(task?.project_id ?? defaultProjectId ?? projects[0]?.id ?? "");
+  const [localError, setLocalError] = useState<string | undefined>();
+  const [savingOffline, setSavingOffline] = useState(false);
 
   const action = task ? updateTaskAction.bind(null, task.id) : createTaskAction;
   const [state, formAction, pending] = useActionState(action, { error: undefined });
+  const error = localError ?? state.error;
+  const busy = pending || savingOffline;
+
+  async function saveOffline(fd: FormData) {
+    if (!onOfflineSave) return;
+    const title = String(fd.get("title") ?? "").trim();
+    if (!title) {
+      setLocalError("Enter a title.");
+      return;
+    }
+    if (!projectId) {
+      setLocalError("Select a project.");
+      return;
+    }
+
+    const project = projects.find((candidate) => candidate.id === projectId);
+    const patch: Partial<CachedTask> = {
+      title,
+      description: String(fd.get("description") ?? "") || null,
+      project_id: projectId,
+      project_name: project?.name ?? "Project",
+      project_color: project?.color ?? null,
+      phase_id: String(fd.get("phase_id") ?? "") || null,
+      status: String(fd.get("status") ?? "todo") as CachedTask["status"],
+      priority: String(fd.get("priority") ?? "none") as CachedTask["priority"],
+      progress: task?.progress ?? 0,
+      start_date: task?.start_date ?? null,
+      due_date: String(fd.get("due_date") ?? "") || null,
+      reminder_at: String(fd.get("reminder_at") ?? "") || null,
+      estimated_minutes: task?.estimated_minutes ?? null,
+      sort_order: task?.sort_order ?? 0,
+    };
+
+    setSavingOffline(true);
+    const id = await onOfflineSave({
+      op: task ? "update" : "create",
+      taskId: task?.id ?? "",
+      patch,
+    });
+    setSavingOffline(false);
+    if (id) {
+      setLocalError(undefined);
+      onOpenChange(false);
+      router.refresh();
+    } else {
+      setLocalError("Could not save this task on the device.");
+    }
+  }
 
   useEffect(() => {
     if (state.data && !pending) {
@@ -66,7 +123,13 @@ export function TaskFormDialog({
   const phaseOptions = phases.filter((p) => p.project_id === projectId);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setLocalError(undefined);
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{task ? "Edit task" : "New task"}</DialogTitle>
@@ -77,6 +140,12 @@ export function TaskFormDialog({
 
         <form
           action={(fd) => {
+            if (!online) {
+              // No request leaves the device: the row and the intent to sync it
+              // are both in IndexedDB before this form closes.
+              void saveOffline(fd);
+              return;
+            }
             const normalized = new FormData();
             for (const [key, value] of fd.entries()) normalized.append(key, value);
             normalized.set("reminder_at", toIsoSubmit(String(fd.get("reminder_at") ?? "")));
@@ -84,7 +153,7 @@ export function TaskFormDialog({
           }}
           className="flex flex-col gap-4"
         >
-          <FormField label="Title" htmlFor="task-title" error={state.error}>
+          <FormField label="Title" htmlFor="task-title" error={error}>
             <Input
               id="task-title"
               name="title"
@@ -192,8 +261,16 @@ export function TaskFormDialog({
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={pending}>
-              {pending ? "Saving…" : task ? "Save changes" : "Create task"}
+            <Button type="submit" disabled={busy}>
+              {busy
+                ? "Saving…"
+                : online
+                  ? task
+                    ? "Save changes"
+                    : "Create task"
+                  : task
+                    ? "Save on device"
+                    : "Create on device"}
             </Button>
           </div>
         </form>

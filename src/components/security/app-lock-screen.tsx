@@ -118,21 +118,6 @@ export function AppLockScreen({
     };
   }, []);
 
-  /**
-   * Ask for the fingerprint as soon as the screen appears.
-   *
-   * The prompt is the platform's own, and the user has seen it a hundred times
-   * on this phone — making them tap a button first is a step, not a
-   * convenience. A refusal is not an error: the keypad is right there.
-   */
-  const triedFingerprint = React.useRef(false);
-  React.useEffect(() => {
-    if (!biometricReady || !biometricUsable) return;
-    if (triedFingerprint.current) return;
-    triedFingerprint.current = true;
-    void runFingerprint();
-  });
-
   // Ticks only while a lockout is actually running, so a screen nobody is
   // locked out of is not waking the browser once a second for a timestamp it
   // never reads. Once per second is enough for a "12:59 remaining" to read as a
@@ -157,24 +142,42 @@ export function AppLockScreen({
     setPin((current) => current.slice(0, -1));
   }
 
-  async function runFingerprint() {
+  const runFingerprint = React.useCallback(async () => {
     if (fingerprinting) return;
     setFingerprinting(true);
     setError(null);
 
-    const ok = await verifyBiometric(userId);
+    const result = await verifyBiometric(userId);
     setFingerprinting(false);
 
-    if (ok) {
+    if (result.ok) {
       onUnlocked();
       return;
     }
 
-    // A refused or failed fingerprint is not an error message: the user may
-    // have cancelled it, or the sensor may have read a different finger. The
-    // keypad is the way forward and it is already on screen.
-    setError("That did not match. Use your MPIN, or try the fingerprint again.");
-  }
+    // Cancelling the platform prompt is not a failure: the keypad is already
+    // on screen. The other two outcomes need a different next step.
+    if (result.reason === "compromised") {
+      setError("Fingerprint unlock was reset after a security check. Use your MPIN.");
+    } else if (result.reason === "failed") {
+      setError("That did not match. Try again, or use your MPIN.");
+    }
+  }, [fingerprinting, onUnlocked, userId]);
+
+  /**
+   * Ask for the fingerprint as soon as the screen appears.
+   *
+   * The prompt is the platform's own, and the user has seen it a hundred times
+   * on this phone — making them tap a button first is a step, not a
+   * convenience. A refusal is not an error: the keypad is right there.
+   */
+  const triedFingerprint = React.useRef(false);
+  React.useEffect(() => {
+    if (!biometricReady || !biometricUsable) return;
+    if (triedFingerprint.current) return;
+    triedFingerprint.current = true;
+    void runFingerprint();
+  }, [biometricReady, biometricUsable, runFingerprint]);
 
   async function submit() {
     if (!pin || checking || locked) return;
@@ -230,7 +233,7 @@ export function AppLockScreen({
         <button
           type="button"
           onClick={() => void runFingerprint()}
-          disabled={fingerprinting || locked}
+          disabled={fingerprinting}
           aria-label="Unlock with fingerprint"
           className={cn(
             "flex size-20 items-center justify-center rounded-full border-2 border-primary/30 bg-primary/10 text-primary",
@@ -366,7 +369,7 @@ export function AppLockScreen({
       {resetting ? (
         <div className="flex w-full max-w-xs flex-col items-end gap-2">
           <label htmlFor="reset-mpin-email" className="text-xs text-muted-foreground">
-            Reset link kis email pe bhejein?
+            Send a reset link to your email?
           </label>
           <input
             id="reset-mpin-email"

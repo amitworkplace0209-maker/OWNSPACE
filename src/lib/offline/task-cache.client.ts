@@ -13,18 +13,25 @@
  * next, and namespacing the key is what prevents it.
  */
 
+import { announceSyncChange } from "@/lib/offline/sync-events";
 import {
   applyOptimisticTask,
+  applyOptimisticWrite,
   CACHE_VERSION,
   enqueueMutation,
   isSnapshotUsable,
   isValidSnapshot,
+  mergeServerTaskWrites,
   mergeServerTasks,
   mutationId,
   pruneStaleMutations,
+  pruneStaleWrites,
   settleMutation,
+  settleWrite,
+  writeId,
   type CachedTask,
   type QueuedMutation,
+  type QueuedWrite,
   type TaskCacheSnapshot,
 } from "@/lib/offline/task-cache";
 
@@ -96,7 +103,8 @@ async function load(userId: string): Promise<TaskCacheSnapshot | null> {
     const raw = await readStore<TaskCacheSnapshot>(db, (store) => store.get(userId));
     if (!raw || !isValidSnapshot(raw)) return null;
     if (raw.userId !== userId) return null;
-    return raw;
+    // Snapshots written before whole-row writes existed have no `writes` key.
+    return { ...raw, writes: Array.isArray(raw.writes) ? raw.writes : [] };
   } finally {
     db.close();
   }
@@ -139,18 +147,22 @@ export async function writeTaskCache(
 ): Promise<TaskCacheSnapshot | null> {
   const existing = await load(userId);
   const queue = existing?.queue ?? [];
-  const { queue: kept, dropped } = pruneStaleMutations(tasks, queue, Date.now());
+  const writes = existing?.writes ?? [];
+  const { queue: kept } = pruneStaleMutations(tasks, queue, Date.now());
+  const { writes: keptWrites } = pruneStaleWrites(tasks, writes, Date.now());
 
   const merged = mergeServerTasks(existing?.tasks ?? [], tasks, kept);
   const snapshot: TaskCacheSnapshot = {
     userId,
-    tasks: merged,
+    tasks: mergeServerTaskWrites(merged, tasks, keptWrites),
     queue: kept,
+    writes: keptWrites,
     cachedAt: new Date().toISOString(),
   };
 
   await save(snapshot);
-  return dropped.length > 0 ? { ...snapshot, queue: kept } : snapshot;
+  announceSyncChange();
+  return snapshot;
 }
 
 /** Applies an edit locally and queues it for replay. */
@@ -172,9 +184,11 @@ export async function queueTaskMutation(
     ...existing,
     tasks: applyOptimisticTask(existing.tasks, entry),
     queue,
+    writes: existing.writes ?? [],
   };
 
   await save(snapshot);
+  announceSyncChange();
   return { snapshot, id: entry.id };
 }
 
@@ -187,7 +201,98 @@ export async function settleQueuedMutation(
   if (!existing) return;
 
   const { tasks, queue } = settleMutation(existing.tasks, existing.queue, queuedId);
-  await save({ ...existing, tasks, queue });
+  await save({ ...existing, tasks, queue, writes: existing.writes ?? [] });
+  announceSyncChange();
+}
+
+/**
+ * Stores a whole-row create/edit/delete locally before any network call.
+ *
+ * The row gets its permanent uuid here, so a create replayed twice is an upsert
+ * of the same row rather than a duplicate. Nothing is sent until the caller
+ * decides the connection is usable.
+ */
+export async function queueTaskWrite(
+  userId: string,
+  input: {
+    op: QueuedWrite["op"];
+    taskId: string;
+    patch: Partial<CachedTask>;
+    queuedAt?: string;
+  }
+): Promise<{ snapshot: TaskCacheSnapshot; id: string } | null> {
+  const existing = await load(userId);
+  if (!existing) return null;
+
+  const queuedAt = input.queuedAt ?? new Date().toISOString();
+  const currentWrites = existing.writes ?? [];
+  const baseId = writeId(input.op, input.taskId, queuedAt);
+  let id = baseId;
+  let suffix = 2;
+  while (currentWrites.some((candidate) => candidate.id === id)) {
+    id = `${baseId}#${suffix}`;
+    suffix += 1;
+  }
+  const entry: QueuedWrite = {
+    id,
+    op: input.op,
+    taskId: input.taskId,
+    patch: input.patch,
+    queuedAt,
+    attempts: 0,
+  };
+  const writes = [...currentWrites, entry];
+  const snapshot: TaskCacheSnapshot = {
+    ...existing,
+    tasks: applyOptimisticWrite(existing.tasks, entry),
+    writes,
+  };
+
+  await save(snapshot);
+  announceSyncChange();
+  return { snapshot, id: entry.id };
+}
+
+/** Clears a write after the server acknowledges it. */
+export async function settleTaskWrite(userId: string, writeIdToSettle: string): Promise<void> {
+  const existing = await load(userId);
+  if (!existing) return;
+  const { tasks, writes } = settleWrite(
+    existing.tasks,
+    existing.writes ?? [],
+    writeIdToSettle
+  );
+  await save({ ...existing, tasks, writes });
+  announceSyncChange();
+}
+
+/** Marks a rejected write so the sync indicator can report it. */
+export async function recordTaskWriteFailure(
+  userId: string,
+  writeIdToFail: string,
+  error: string
+): Promise<void> {
+  const existing = await load(userId);
+  if (!existing) return;
+  const writes = (existing.writes ?? []).map((write) =>
+    write.id === writeIdToFail
+      ? { ...write, attempts: write.attempts + 1, lastError: error }
+      : write
+  );
+  await save({ ...existing, writes });
+  announceSyncChange();
+}
+
+/** Counts outstanding and failed writes for the sync indicator. */
+export async function readTaskWriteCounts(
+  userId: string
+): Promise<{ pending: number; failed: number }> {
+  const snapshot = await load(userId);
+  const writes = snapshot?.writes ?? [];
+  return {
+    pending: writes.length,
+    failed: writes.filter((write) => Boolean(write.lastError)).length,
+  };
 }
 
 /** Wipes this user's cache — called on sign-out so nothing is left behind. */

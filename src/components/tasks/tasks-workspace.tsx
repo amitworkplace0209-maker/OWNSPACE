@@ -38,6 +38,7 @@ import { WorkspaceToolbar, VIEW_ICONS } from "@/components/shared/workspace-tool
 import { formatDateShort, isOverdueDate } from "@/lib/format";
 import { useTasksLive } from "@/hooks/use-tasks-live";
 import { useBakedTasks } from "@/hooks/use-baked-tasks";
+import { useOnlineStatus } from "@/hooks/use-online-status";
 import { deleteTaskAction } from "@/lib/actions/tasks";
 import {
   bulkDeleteTasksAction,
@@ -115,6 +116,7 @@ export function TasksWorkspace({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const offline = useOffline();
+  const browserOnline = useOnlineStatus();
 
   const [newOpen, setNewOpen] = React.useState(openNew);
   const [editing, setEditing] = React.useState<Task | null>(null);
@@ -156,7 +158,7 @@ export function TasksWorkspace({
   // rows pass straight through.
   const serverTasks = tasks;
 
-  const { status, liveTasks, queuedCount, update, syncNow } = useTasksLive({
+  const { status, liveTasks, queuedCount, update, write, syncNow } = useTasksLive({
     userId,
     tasks: serverTasks,
     enabled: !readOnly,
@@ -552,6 +554,7 @@ export function TasksWorkspace({
         phases={phases}
         task={editing}
         defaultProjectId={initialProjectId ?? null}
+        onOfflineSave={readOnly ? undefined : write}
       />
 
       <ConfirmDialog
@@ -562,7 +565,12 @@ export function TasksWorkspace({
         confirmLabel="Delete task"
         onConfirm={async () => {
           if (!deleting) return;
-          await deleteTaskAction(deleting.id);
+          if (!browserOnline && userId) {
+            await write({ op: "delete", taskId: deleting.id, patch: {} });
+            toast.success("Task removed on this device. It will sync when you reconnect.");
+          } else {
+            await deleteTaskAction(deleting.id);
+          }
           setDeleting(null);
           router.refresh();
         }}

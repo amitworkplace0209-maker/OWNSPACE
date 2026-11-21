@@ -41,44 +41,54 @@ export function useNotificationActions({
   const router = useRouter();
 
   const apply = React.useCallback(
-    async (record: NotificationActionRecord) => {
+    async (record: NotificationActionRecord): Promise<boolean> => {
       const { action, entityId, type } = record;
 
-      if (action === "dismiss") {
-        if (type === "reminder" && entityId) {
-          await completeReminderAction(entityId, true);
+      try {
+        if (action === "dismiss") {
+          // Swiping a reminder away must not silently complete it. Only an
+          // in-app notification row is marked read by a dismissal.
+          if (entityId && type !== "reminder") {
+            await markNotificationReadAction(entityId);
+          }
+          onHandled?.();
+          router.refresh();
+          return true;
         }
+
+        if (action === "open") {
+          router.push(type === "reminder" ? "/reminders" : "/notifications");
+          onHandled?.();
+          return true;
+        }
+
+        if (!entityId) return true;
+
+        switch (action) {
+          case "complete":
+            if (type === "reminder") await completeReminderAction(entityId, true);
+            else await markNotificationReadAction(entityId);
+            toast.success("Done.");
+            break;
+
+          case "snooze":
+            if (type === "reminder") {
+              await snoozeReminderAction(entityId, 10);
+              toast("Snoozed", { description: "Back in 10 minutes." });
+            }
+            break;
+
+          default:
+            return true;
+        }
+
         onHandled?.();
         router.refresh();
-        return;
+        return true;
+      } catch {
+        // A failed write must stay parked; only a successful one may be deleted.
+        return false;
       }
-
-      if (!entityId) return;
-
-      switch (action) {
-        case "complete":
-          if (type === "reminder") await completeReminderAction(entityId, true);
-          else await markNotificationReadAction(entityId);
-          toast.success("Done.");
-          break;
-
-        case "snooze":
-          if (type === "reminder") {
-            await snoozeReminderAction(entityId, 10);
-            toast("Snoozed", { description: "Back in 10 minutes." });
-          }
-          break;
-
-        case "open":
-          router.push(type === "reminder" ? "/reminders" : "/notifications");
-          break;
-
-        default:
-          return;
-      }
-
-      onHandled?.();
-      router.refresh();
     },
     [onHandled, router]
   );
@@ -90,7 +100,10 @@ export function useNotificationActions({
     const onMessage = (event: MessageEvent) => {
       if (event.data?.type !== MESSAGE_TYPE) return;
       const record = event.data.payload as NotificationActionRecord | undefined;
-      if (record) void apply(record);
+      if (!record) return;
+      void apply(record).then((ok) => {
+        if (!ok) void parkAction(record);
+      });
     };
 
     navigator.serviceWorker.addEventListener("message", onMessage);
@@ -109,9 +122,9 @@ export function useNotificationActions({
 
       for (const record of records) {
         if (cancelled) return;
-        await apply(record);
+        const ok = await apply(record);
+        if (ok) await clearParkedAction(record.id);
       }
-      await clearParkedActions();
     })();
 
     return () => {
@@ -173,19 +186,37 @@ async function readParkedActions(): Promise<NotificationActionRecord[]> {
   }
 }
 
-async function clearParkedActions(): Promise<void> {
+async function clearParkedAction(id: string): Promise<void> {
   const db = await openDb();
   if (!db) return;
   try {
     await new Promise<void>((resolve) => {
       const tx = db.transaction(STORE, "readwrite");
-      tx.objectStore(STORE).clear();
+      tx.objectStore(STORE).delete(id);
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
       tx.onabort = () => resolve();
     });
   } catch {
-    // Nothing to do — a replayed intent is harmless, just repeated.
+    // The worst case is a duplicate replay, which the write actions tolerate.
+  } finally {
+    db.close();
+  }
+}
+
+async function parkAction(record: NotificationActionRecord): Promise<void> {
+  const db = await openDb();
+  if (!db) return;
+  try {
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(STORE, "readwrite");
+      tx.objectStore(STORE).put(record, record.id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    });
+  } catch {
+    // Parking is best-effort; the action can still be applied in the app.
   } finally {
     db.close();
   }

@@ -66,14 +66,41 @@ export type QueuedMutation = {
   attempts: number;
 };
 
+/**
+ * A whole-row write made while offline: create, edit or delete.
+ *
+ * Field mutations (status/priority/progress) have their own narrow queue above,
+ * but a new task, an edited title or a deletion cannot be expressed as one of
+ * those. A write carries the complete patch the user intended and the stable id
+ * the row will have on the server, which makes replay idempotent: replaying the
+ * same create twice upserts the same row instead of duplicating it.
+ */
+export type QueuedWrite = {
+  id: string;
+  op: "create" | "update" | "delete";
+  taskId: string;
+  patch: Partial<CachedTask>;
+  queuedAt: string;
+  attempts: number;
+  /** Last server rejection, surfaced in the sync indicator. */
+  lastError?: string;
+};
+
 /** Everything the cache holds for one user. */
 export type TaskCacheSnapshot = {
   userId: string;
   tasks: CachedTask[];
   queue: QueuedMutation[];
+  /** Whole-row writes awaiting replay. Optional for older snapshots. */
+  writes?: QueuedWrite[];
   /** When this snapshot was written. */
   cachedAt: string;
 };
+
+/** A stable, idempotent key for a whole-row write. */
+export function writeId(op: QueuedWrite["op"], taskId: string, queuedAt: string): string {
+  return `${op}:${taskId}:${queuedAt}`;
+}
 
 export const CACHE_VERSION = 1;
 
@@ -315,4 +342,168 @@ export function enqueueMutation(
     return queue;
   }
   return [...queue, mutation];
+}
+
+/**
+ * Applies a whole-row write to the cached list immediately.
+ *
+ * A create appends a local row with the id that will be used on the server; an
+ * update patches the matching row; a delete removes it. Rows touched by an
+ * unreplayed write are marked `pending` so the UI can say they are not synced.
+ */
+export function applyOptimisticWrite(
+  tasks: CachedTask[],
+  write: Pick<QueuedWrite, "op" | "taskId" | "patch">
+): CachedTask[] {
+  if (write.op === "delete") {
+    return tasks.filter((task) => task.id !== write.taskId);
+  }
+
+  if (write.op === "create") {
+    if (tasks.some((task) => task.id === write.taskId)) return tasks;
+    return [...tasks, { ...(write.patch as CachedTask), pending: true }];
+  }
+
+  return tasks.map((task) =>
+    task.id === write.taskId ? { ...task, ...write.patch, pending: true } : task
+  );
+}
+
+/** Removes a settled write and clears `pending` once nothing else targets the row. */
+export function settleWrite(
+  tasks: CachedTask[],
+  writes: QueuedWrite[],
+  writeIdToSettle: string
+): { tasks: CachedTask[]; writes: QueuedWrite[] } {
+  const settled = writes.find((write) => write.id === writeIdToSettle);
+  const nextWrites = writes.filter((write) => write.id !== writeIdToSettle);
+  if (!settled) return { tasks, writes: nextWrites };
+
+  if (nextWrites.some((write) => write.taskId === settled.taskId)) {
+    return { tasks, writes: nextWrites };
+  }
+
+  return {
+    tasks: tasks.map((task) =>
+      task.id === settled.taskId && task.pending ? { ...task, pending: false } : task
+    ),
+    writes: nextWrites,
+  };
+}
+
+/**
+ * Drops writes whose row has since been changed on the server.
+ *
+ * "Newer data wins" applies to whole-row writes too: if the server sent a row
+ * newer than our intent, replaying would clobber that newer version, so the
+ * write is discarded rather than silently overwriting it.
+ */
+export function pruneStaleWrites(
+  tasks: CachedTask[],
+  writes: QueuedWrite[],
+  now: number
+): { writes: QueuedWrite[]; dropped: QueuedWrite[] } {
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const kept: QueuedWrite[] = [];
+  const dropped: QueuedWrite[] = [];
+
+  for (const write of writes) {
+    const task = byId.get(write.taskId);
+    const queuedAt = Date.parse(write.queuedAt);
+    if (Number.isNaN(queuedAt) || now - queuedAt > MAX_SNAPSHOT_AGE_MS) {
+      dropped.push(write);
+    } else if (write.op !== "create" && task && Date.parse(task.updated_at) > queuedAt) {
+      dropped.push(write);
+    } else {
+      kept.push(write);
+    }
+  }
+
+  return { writes: kept, dropped };
+}
+
+/**
+ * Folds a fresh server payload together with outstanding writes.
+ *
+ * A locally created row is kept until its create is acknowledged; a server row
+ * with pending writes keeps the optimistic values layered on top so the UI does
+ * not flicker back between a response and the replay.
+ */
+export function mergeServerTaskWrites(
+  cached: CachedTask[],
+  incoming: CachedTask[],
+  writes: QueuedWrite[]
+): CachedTask[] {
+  const byId = new Map<string, QueuedWrite[]>();
+  for (const write of writes) {
+    const list = byId.get(write.taskId) ?? [];
+    list.push(write);
+    byId.set(write.taskId, list);
+  }
+
+  const seen = new Set<string>();
+  const merged = incoming.map((task) => {
+    seen.add(task.id);
+    const pending = byId.get(task.id);
+    if (!pending?.length) return { ...task, pending: false };
+    return pending.reduce<CachedTask>(
+      (current, write) =>
+        write.op === "delete" ? current : { ...current, ...write.patch, pending: true },
+      { ...task }
+    );
+  });
+
+  for (const task of cached) {
+    if (seen.has(task.id)) continue;
+    if (!byId.has(task.id)) continue;
+    if (byId.get(task.id)?.some((write) => write.op === "delete")) continue;
+    merged.push(task);
+  }
+
+  return merged;
+}
+
+/** Number of whole-row writes that have failed and still need attention. */
+export function failedWriteCount(writes: QueuedWrite[]): number {
+  return writes.filter((write) => Boolean(write.lastError)).length;
+}
+
+/**
+ * Builds the local row for an offline-created task.
+ *
+ * Every field the server row needs is present so the optimistic row can be
+ * rendered, filtered and edited exactly like a server row. The patch supplies
+ * the user's values; the rest are safe defaults.
+ */
+export function localTaskFromPatch(
+  userId: string,
+  taskId: string,
+  patch: Partial<CachedTask>,
+  now: string = new Date().toISOString()
+): CachedTask {
+  return {
+    id: taskId,
+    user_id: userId,
+    title: "",
+    description: null,
+    project_id: "",
+    phase_id: null,
+    node_id: null,
+    parent_task_id: null,
+    status: "todo",
+    priority: "none",
+    progress: 0,
+    start_date: null,
+    due_date: null,
+    reminder_at: null,
+    estimated_minutes: null,
+    sort_order: 0,
+    created_at: now,
+    updated_at: now,
+    project_name: "Project",
+    project_color: null,
+    tag_names: [],
+    ...patch,
+    pending: true,
+  };
 }

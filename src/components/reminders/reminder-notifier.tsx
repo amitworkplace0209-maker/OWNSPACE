@@ -170,6 +170,7 @@ function raiseAlert(reminder: NotifiableReminder, settings: NotifySettings): voi
     title: reminder.title || "Reminder",
     body: detail,
     tag: `ownspece-reminder-${reminder.id}`,
+    renotify: true,
     url: "/reminders",
     type: "reminder",
     entityId: reminder.id,

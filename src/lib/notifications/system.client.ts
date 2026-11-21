@@ -51,7 +51,7 @@ export type SystemNotificationInput = {
  */
 type WorkerNotificationOptions = NotificationOptions & {
   actions?: Array<{ action: string; title: string }>;
-  renotify?: string | boolean;
+  renotify?: boolean;
   vibrate?: number[] | boolean;
   timestamp?: number;
 };
@@ -115,11 +115,10 @@ export async function showSystemNotification(
       const options: WorkerNotificationOptions = {
         body: input.body ?? "",
         icon: "/icon-192x192.png",
-        badge: "/icon-192x192.png",
+        badge: "/badge.svg",
         tag,
-        // Without a tag the OS refuses to re-alert an already-shown
-        // notification, so a genuinely new alert would stay silent.
-        renotify: input.renotify === true ? tag : false,
+        // `renotify` is a boolean; passing the tag is a truthy but invalid value.
+        renotify: input.renotify === true,
         timestamp: Date.now(),
         requireInteraction: input.requireInteraction === true,
         silent: false,

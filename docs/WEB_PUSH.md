@@ -15,7 +15,14 @@ npm run db:migrate     # creates push_subscriptions
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=...
 VAPID_PRIVATE_KEY=...
 VAPID_SUBJECT=mailto:you@example.com
+CRON_SECRET=...        # a long random string, server-only
 ```
+
+Then call `GET /api/cron/reminders` once a minute from a scheduler with
+`Authorization: Bearer $CRON_SECRET`. That sweep uses the service-role key and
+is what lets a due reminder reach a device with the app closed. Without the
+scheduler, the in-app sweep still runs whenever the app is open, but a closed
+app has nothing asking the push service to deliver.
 
 Without these the app still works: reminders appear in the notification centre
 and as in-app alerts. They just cannot reach a closed app. The notifications
@@ -49,7 +56,7 @@ What makes a web notification feel like a native one:
 | ------ | ---------- |
 | **Done** | `completeReminderAction` |
 | **Snooze 10m** | `snoozeReminderAction` |
-| swipe to dismiss | `completeReminderAction` |
+| swipe to dismiss | clears the notification only — it does **not** complete the reminder |
 
 The service worker **cannot** perform these itself — it has no Supabase session
 and cannot call a server action. It posts the intent to any open client
@@ -64,7 +71,7 @@ Capped at 3 actions — Chromium refuses a fourth.
 | Behaviour | How |
 | --------- | --- |
 | One notification per reminder, not per fire | `tag: reminder-<id>` — a repeat replaces its own |
-| A genuinely new push still alerts | `renotify` set alongside `tag` (without it the OS stays silent) |
+| A genuinely new push still alerts | boolean `renotify: true` alongside `tag` (without it the OS stays silent) |
 | Unread count on the app icon | `setBadgeCount` (Chrome/Edge; ignored elsewhere) |
 | Tap focuses the existing window | `notificationclick` reuses a client instead of opening a second app |
 | Devices listed and revocable | `push_subscriptions`, one row per browser profile |
@@ -80,6 +87,8 @@ Capped at 3 actions — Chromium refuses a fourth.
 | `src/hooks/use-push-subscription.ts` | Per-device subscribe control |
 | `src/hooks/use-notification-actions.ts` | Applies Done/Snoze; badge sync |
 | `src/app/api/push/public-key/route.ts` | Serves the public key for subscribing |
+| `src/app/api/cron/reminders/route.ts` | Secret-protected sweep for closed devices |
+| `src/lib/notifications/due-reminders.ts` | Shared due-reminder rules for action + cron |
 | `supabase/migrations/025_push_subscriptions.sql` | Device table + RLS |
 | `scripts/generate-vapid.cjs` | Key pair generator |
 

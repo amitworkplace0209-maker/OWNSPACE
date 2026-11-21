@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { readActiveUser, readTaskCache } from "@/lib/offline/task-cache.client";
+import { SYNC_STATUS_EVENT } from "@/lib/offline/sync-events";
 import type { CachedTask } from "@/lib/offline/task-cache";
 
 type BakedState = {
@@ -40,17 +41,24 @@ export function useBakedTasks(userId: string | null): {
     if (!userId) return;
 
     let cancelled = false;
-    void readTaskCache(userId).then((snapshot) => {
-      if (cancelled) return;
-      setState({
-        key: userId,
-        tasks: snapshot?.tasks ?? [],
-        cachedAt: snapshot?.cachedAt ?? null,
+    const refresh = () => {
+      void readTaskCache(userId).then((snapshot) => {
+        if (cancelled) return;
+        setState({
+          key: userId,
+          tasks: snapshot?.tasks ?? [],
+          cachedAt: snapshot?.cachedAt ?? null,
+        });
       });
-    });
+    };
 
+    refresh();
+    // A write made while offline changes the snapshot after this hook mounted.
+    // Without this, the just-created task would not appear until a reload.
+    window.addEventListener(SYNC_STATUS_EVENT, refresh);
     return () => {
       cancelled = true;
+      window.removeEventListener(SYNC_STATUS_EVENT, refresh);
     };
   }, [userId]);
 
@@ -88,17 +96,22 @@ export function useBakedTasksForLastUser(): {
     if (!userId) return;
 
     let cancelled = false;
-    void readTaskCache(userId).then((snapshot) => {
-      if (cancelled) return;
-      setState({
-        key: userId,
-        tasks: snapshot?.tasks ?? [],
-        cachedAt: snapshot?.cachedAt ?? null,
+    const refresh = () => {
+      void readTaskCache(userId).then((snapshot) => {
+        if (cancelled) return;
+        setState({
+          key: userId,
+          tasks: snapshot?.tasks ?? [],
+          cachedAt: snapshot?.cachedAt ?? null,
+        });
       });
-    });
+    };
 
+    refresh();
+    window.addEventListener(SYNC_STATUS_EVENT, refresh);
     return () => {
       cancelled = true;
+      window.removeEventListener(SYNC_STATUS_EVENT, refresh);
     };
   }, []);
 

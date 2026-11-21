@@ -23,6 +23,9 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { usePwaInstall } from "@/hooks/use-pwa-install";
 import { clearReminderCache, readReminderCache, readActiveReminderUser } from "@/lib/offline/reminder-cache.client";
 import { clearTaskCache, readTaskCache, readActiveUser } from "@/lib/offline/task-cache.client";
+import { clearRowCache } from "@/lib/offline/row-cache.client";
+import { announceSyncChange } from "@/lib/offline/sync-events";
+import { clearSyncMetadata } from "@/lib/offline/sync-status.client";
 import {
   clearShell,
   readShellEntryCount,
@@ -162,8 +165,11 @@ export function PwaSettings({ userId }: { userId: string }) {
       await Promise.all([
         clearTaskCache(taskUserId),
         clearReminderCache(reminderUserId),
+        clearRowCache(userId),
         clearShell(userId),
       ]);
+      clearSyncMetadata(userId);
+      announceSyncChange();
 
       setCache(EMPTY_CACHE);
       setShellPages(0);

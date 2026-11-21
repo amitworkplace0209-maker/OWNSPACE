@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import type { ActivityType, NotificationType } from "@/types";
 
@@ -38,14 +39,17 @@ export async function logActivity(input: {
  * Inserts an in-app notification. Only called for meaningful events (e.g. a
  * due reminder) — never to fabricate content.
  */
-export async function createNotification(input: {
-  userId: string;
-  type: NotificationType;
-  title: string;
-  body?: string | null;
-}): Promise<void> {
+export async function createNotification(
+  input: {
+    userId: string;
+    type: NotificationType;
+    title: string;
+    body?: string | null;
+  },
+  client?: SupabaseClient
+): Promise<void> {
   try {
-    const supabase = await createClient();
+    const supabase = client ?? (await createClient());
     await supabase.from("notifications").insert({
       user_id: input.userId,
       type: input.type,

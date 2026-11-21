@@ -5,16 +5,25 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useOnlineStatus } from "@/hooks/use-online-status";
 import { setTaskStatusAction, setTaskPriorityAction, setTaskProgressAction } from "@/lib/actions/tasks";
+import { replayTaskWriteAction } from "@/lib/actions/tasks-offline";
+import { announceSyncChange, SYNC_REQUEST_EVENT } from "@/lib/offline/sync-events";
+import { recordSyncSuccess } from "@/lib/offline/sync-status.client";
 import {
   applyOptimisticTask,
+  applyOptimisticWrite,
+  localTaskFromPatch,
   type CachedTask,
   type QueuedMutation,
+  type QueuedWrite,
 } from "@/lib/offline/task-cache";
 import {
   queueTaskMutation,
+  queueTaskWrite,
   readTaskCache,
+  recordTaskWriteFailure,
   requestBackgroundSync,
   settleQueuedMutation,
+  settleTaskWrite,
   SYNC_MESSAGE,
   writeTaskCache,
 } from "@/lib/offline/task-cache.client";
@@ -51,6 +60,13 @@ export type OptimisticUpdate = (
   value: string | number
 ) => Promise<void>;
 
+/** A whole-row change queued locally: create, edit or delete. */
+export type OfflineTaskWrite = {
+  op: QueuedWrite["op"];
+  taskId: string;
+  patch: Partial<CachedTask>;
+};
+
 export function useTasksLive({
   userId,
   tasks,
@@ -66,6 +82,8 @@ export function useTasksLive({
   liveTasks: CachedTask[];
   queuedCount: number;
   update: OptimisticUpdate;
+  /** Queue a create/edit/delete locally, then replay it when online. */
+  write: (input: OfflineTaskWrite) => Promise<string | null>;
   /** Force a replay of the queue, e.g. from the connectivity banner. */
   syncNow: () => void;
 } {
@@ -73,6 +91,7 @@ export function useTasksLive({
   const online = useOnlineStatus();
   const [channelStatus, setChannelStatus] = React.useState<LiveStatus>("connecting");
   const [overrides, setOverrides] = React.useState<Record<string, CachedTask>>({});
+  const [deleted, setDeleted] = React.useState<Set<string>>(new Set());
   const [queuedCount, setQueuedCount] = React.useState(0);
   const [manualSync, setManualSync] = React.useState(0);
 
@@ -83,7 +102,7 @@ export function useTasksLive({
     const id = window.requestAnimationFrame(() => {
       void writeTaskCache(userId, tasks).then((snapshot) => {
         if (!snapshot) return;
-        setQueuedCount(snapshot.queue.length);
+        setQueuedCount(snapshot.queue.length + (snapshot.writes?.length ?? 0));
       });
     });
     return () => window.cancelAnimationFrame(id);
@@ -91,6 +110,35 @@ export function useTasksLive({
 
   const update = React.useCallback<OptimisticUpdate>(
     async (taskId, kind, value) => {
+      // A task created offline does not exist on the server yet, so a field
+      // mutation would be replayed before its create and fail. Fold the change
+      // into the row's whole-row write instead; replay then sends create first.
+      if (!tasks.some((task) => task.id === taskId) && overrides[taskId]) {
+        const patch: Partial<CachedTask> =
+          kind === "status"
+            ? { status: String(value) as CachedTask["status"] }
+            : kind === "priority"
+              ? { priority: String(value) as CachedTask["priority"] }
+              : { progress: Number(value) };
+        setOverrides((current) => {
+          const baseline = current[taskId];
+          if (!baseline) return current;
+          return {
+            ...current,
+            [taskId]: applyOptimisticWrite([baseline], { op: "update", taskId, patch })[0],
+          };
+        });
+        if (userId) {
+          const queued = await queueTaskWrite(userId, { op: "update", taskId, patch });
+          if (queued) {
+            setQueuedCount(queued.snapshot.queue.length + (queued.snapshot.writes?.length ?? 0));
+          }
+          if (navigator.onLine) setManualSync((tick) => tick + 1);
+          else void requestBackgroundSync();
+        }
+        return;
+      }
+
       // Paint the change immediately, from whatever row we currently hold.
       setOverrides((current) => {
         const baseline =
@@ -142,7 +190,68 @@ export function useTasksLive({
         // nothing is silently lost.
       }
     },
-    [router, tasks, userId]
+    [overrides, router, tasks, userId]
+  );
+
+  /**
+   * Queues a whole-row create/edit/delete.
+   *
+   * The local row is painted and written to IndexedDB before any server call,
+   * so closing the app immediately after creating a task cannot lose it. The
+   * returned id is the one the row will have on the server, which makes replay
+   * idempotent.
+   */
+  const write = React.useCallback(
+    async (input: OfflineTaskWrite): Promise<string | null> => {
+      if (!userId) return null;
+
+      const queuedAt = new Date().toISOString();
+      const taskId =
+        input.op === "create" ? crypto.randomUUID() : input.taskId;
+      const patch =
+        input.op === "create"
+          ? localTaskFromPatch(userId, taskId, input.patch, queuedAt)
+          : input.patch;
+
+      setOverrides((current) => {
+        if (input.op === "delete") return current;
+        const baseline =
+          current[taskId] ??
+          tasks.find((task) => task.id === taskId) ??
+          (patch as CachedTask);
+        const [updated] = applyOptimisticWrite([baseline], {
+          op: input.op,
+          taskId,
+          patch,
+        });
+        return updated ? { ...current, [taskId]: updated } : current;
+      });
+      if (input.op === "delete") {
+        setDeleted((current) => new Set(current).add(taskId));
+      }
+
+      const queued = await queueTaskWrite(userId, {
+        op: input.op,
+        taskId,
+        patch,
+        queuedAt,
+      });
+      if (queued) {
+        setQueuedCount(queued.snapshot.queue.length + (queued.snapshot.writes?.length ?? 0));
+      } else {
+        setQueuedCount((count) => count + 1);
+      }
+
+      if (!navigator.onLine) {
+        void requestBackgroundSync();
+        return taskId;
+      }
+
+      // One replay pass handles every queued write in order.
+      setManualSync((tick) => tick + 1);
+      return taskId;
+    },
+    [tasks, userId]
   );
 
   // --- Realtime -------------------------------------------------------------
@@ -242,6 +351,28 @@ const channel = supabase
         setQueuedCount((count) => Math.max(0, count - 1));
       }
 
+      // Whole-row writes are replayed after field mutations, so a task created
+      // offline exists before a completion made against it is sent.
+      let writeFailed = false;
+      for (const pendingWrite of snapshot.writes ?? []) {
+        if (cancelled) return;
+        const result = await replayTaskWriteAction(pendingWrite);
+        if (result.error) {
+          writeFailed = true;
+          await recordTaskWriteFailure(userId, pendingWrite.id, result.error);
+        } else {
+          await settleTaskWrite(userId, pendingWrite.id);
+          setOverrides((current) => {
+            const next = { ...current };
+            delete next[pendingWrite.taskId];
+            return next;
+          });
+        }
+        setQueuedCount((count) => Math.max(0, count - 1));
+      }
+
+      if (!writeFailed) recordSyncSuccess(userId);
+      announceSyncChange();
       if (!cancelled) router.refresh();
     })();
 
@@ -266,10 +397,23 @@ const channel = supabase
     return () => navigator.serviceWorker?.removeEventListener("message", onMessage);
   }, [enabled, syncNow]);
 
-  const liveTasks = React.useMemo(
-    () => tasks.map((task) => overrides[task.id] ?? task),
-    [overrides, tasks]
-  );
+  // The global sync indicator dispatches this when the user presses "Sync now".
+  React.useEffect(() => {
+    if (!enabled) return;
+    const onRequest = () => syncNow();
+    window.addEventListener(SYNC_REQUEST_EVENT, onRequest);
+    return () => window.removeEventListener(SYNC_REQUEST_EVENT, onRequest);
+  }, [enabled, syncNow]);
 
-  return { status, liveTasks, queuedCount, update, syncNow };
+  const liveTasks = React.useMemo(() => {
+    const existing = tasks
+      .filter((task) => !deleted.has(task.id))
+      .map((task) => overrides[task.id] ?? task);
+    const created = Object.values(overrides).filter(
+      (task) => !tasks.some((serverTask) => serverTask.id === task.id)
+    );
+    return [...existing, ...created];
+  }, [deleted, overrides, tasks]);
+
+  return { status, liveTasks, queuedCount, update, write, syncNow };
 }

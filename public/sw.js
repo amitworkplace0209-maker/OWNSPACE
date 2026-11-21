@@ -59,7 +59,7 @@ const IS_DEV =
   self.location.hostname === "127.0.0.1" ||
   self.location.hostname === "[::1]";
 
-const VERSION = IS_DEV ? "ownspece-dev" : "ownspece-v6";
+const VERSION = IS_DEV ? "ownspece-dev" : "ownspece-v7";
 const STATIC_CACHE = `${VERSION}-static`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 const META_CACHE = `${VERSION}-meta`;
@@ -94,6 +94,7 @@ const PRECACHE = [
   "/icon-192x192.png",
   "/icon-512x512.png",
   "/icon.svg",
+  "/badge.svg",
 ];
 
 // Build output and other immutable, non-user assets.
@@ -101,6 +102,7 @@ const STATIC_PATTERNS = [
   /^\/_next\/static\//,
   /^\/icon-\d+x\d+\.png$/,
   /^\/icon\.svg$/,
+  /^\/badge\.svg$/,
   /^\/manifest\.webmanifest$/,
 ];
 
@@ -581,7 +583,6 @@ self.addEventListener("fetch", (event) => {
  * worker might never have decrypted.
  */
 const FIRED_STORE = "ownspece-notification-fallback";
-const FIRED_KEY = "pending";
 
 async function rememberAction(record) {
   try {
@@ -608,16 +609,6 @@ async function rememberAction(record) {
   }
 }
 
-async function setBadge(count) {
-  try {
-    if (typeof self.registration.setBadgeCount === "function") {
-      await self.registration.setBadgeCount(Math.max(0, count));
-    }
-  } catch {
-    // Badge support is patchy and entirely optional.
-  }
-}
-
 self.addEventListener("push", (event) => {
   let payload = {};
   try {
@@ -640,14 +631,14 @@ self.addEventListener("push", (event) => {
       await self.registration.showNotification(title, {
         body: payload.body || "",
         icon: "/icon-192x192.png",
-        badge: "/icon-192x192.png",
+        badge: "/badge.svg",
         // One slot per source row. A repeating reminder that re-fires replaces
         // its own notification instead of stacking a second copy, which is what
         // `tag` is for and what a native Android notification does.
         tag: payload.tag || "ownspece",
-        // Without a tag the OS refuses to re-alert an already-shown
-        // notification, so a genuinely new push would stay silent.
-        renotify: payload.renotify === true ? payload.tag || "ownspece" : false,
+        // `renotify` is a boolean. A tag string here is truthy but wrong, and
+        // Chromium ignores the re-alert the reminder needs.
+        renotify: payload.renotify === true && Boolean(payload.tag),
         timestamp: Date.now(),
         // A critical reminder stays on screen until it is dealt with; an
         // ordinary one goes away on its own.
@@ -689,7 +680,7 @@ self.addEventListener("notificationclick", (event) => {
     event.waitUntil(
       (async () => {
         const record = {
-          id: `${data.tag || "ownspece"}:${Date.now()}`,
+          id: `${data.tag || "ownspece"}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
           action,
           type: data.type || null,
           entityId: data.entityId || null,
@@ -732,8 +723,8 @@ self.addEventListener("notificationclick", (event) => {
 /**
  * A notification dismissed by swiping it away.
  *
- * Marking the row read here is what stops a cleared notification still showing
- * an unread badge on the next launch.
+ * A dismissal only clears the notification. It deliberately does not complete
+ * a reminder: swiping an alert away is not the same as saying the work is done.
  */
 self.addEventListener("notificationclose", (event) => {
   const data = event.notification.data || {};

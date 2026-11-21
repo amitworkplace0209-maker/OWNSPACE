@@ -26,6 +26,7 @@ import { allNavItems } from "@/config/navigation";
 import { openCommandPalette } from "@/components/layout/command-palette";
 import { usePwaInstall } from "@/hooks/use-pwa-install";
 import { useAppBadge } from "@/hooks/use-notification-actions";
+import { SyncIndicator } from "@/components/layout/sync-indicator";
 import type { AppUser, AppNotification } from "@/types";
 import {
   DropdownMenu,
@@ -259,6 +260,8 @@ export function TopbarInner({
           </form>
 
           <div className="ml-auto flex items-center gap-0.5 sm:gap-1">
+            <SyncIndicator userId={user.id} />
+
             {canInstall ? (
               <Button
                 variant="ghost"
@@ -291,7 +294,7 @@ export function TopbarInner({
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="brand-gradient gap-1.5 px-2 text-white hover:opacity-90 md:px-3"
+                    className="brand-gradient hidden gap-1.5 px-2 text-white hover:opacity-90 sm:inline-flex md:px-3"
                   >
                     <Plus className="size-4" />
                     <span className="hidden md:inline">Create</span>

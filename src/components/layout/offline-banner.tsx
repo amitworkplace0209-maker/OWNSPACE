@@ -28,7 +28,7 @@ import { cn } from "cn";
  */
 
 /** Pages whose rows are cached, so edits here still work offline. */
-const EDITABLE_OFFLINE = ["/tasks", "/reminders"];
+const EDITABLE_OFFLINE = ["/tasks", "/reminders", "/notes"];
 
 export function OfflineBanner() {
   const online = useOnlineStatus();
